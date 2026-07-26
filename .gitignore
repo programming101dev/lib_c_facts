@@ -1,0 +1,201 @@
+# Created by https://www.toptal.com/developers/gitignore/api/c,cmake,clion,visualstudiocode,linux,macos,jetbrains,jetbrains+all,emacs,vim
+
+### C ###
+*.d
+
+# Object files
+*.o
+*.ko
+*.obj
+*.elf
+
+# Linker output
+*.ilk
+*.map
+*.exp
+
+# Precompiled Headers
+*.gch
+*.pch
+
+# Libraries
+*.lib
+*.a
+*.la
+*.lo
+
+# Shared objects
+*.dll
+*.so
+*.so.*
+*.dylib
+
+# Executables
+*.exe
+*.out
+*.app
+*.i*86
+*.x86_64
+*.hex
+
+# Debug files
+*.dSYM/
+*.su
+*.idb
+*.pdb
+
+# Kernel Module Compile Results
+*.mod*
+*.cmd
+.tmp_versions/
+modules.order
+Module.symvers
+Mkfile.old
+dkms.conf
+
+### CMake ###
+CMakeLists.txt.user
+CMakeCache.txt
+CMakeFiles/
+CMakeScripts/
+Testing/
+cmake_install.cmake
+install_manifest.txt
+compile_commands.json
+CTestTestfile.cmake
+_deps/
+*-prefix/
+
+# Common CMake build dirs
+cmake-build-*/
+build/
+build-*/
+
+### JetBrains / CLion ###
+# Ignore everything under .idea except shared settings
+.idea/*
+!.idea/codeStyles/
+!.idea/runConfigurations/
+
+# (Optional) if you also share inspection profiles, uncomment:
+# !.idea/inspectionProfiles/
+
+*.iws
+out/
+.idea_modules/
+atlassian-ide-plugin.xml
+
+### Emacs ###
+*~
+\#*\#
+/.emacs.desktop
+/.emacs.desktop.lock
+*.elc
+auto-save-list/
+tramp/
+.\#*
+
+.org-id-locations
+*_archive
+*_flymake.*
+/eshell/history
+/eshell/lastdir
+/elpa/
+/auto/
+.cask/
+dist/
+flycheck_*.el
+/server/
+/.projectile
+.dir-locals.el
+/network-security.data
+
+### Vim ###
+[._]*.s[a-v][a-z]
+[._]*.sw[a-p]
+[._]s[a-rt-v][a-z]
+[._]ss[a-gi-z]
+[._]sw[a-p]
+[._]*.un~
+Session.vim
+Sessionx.vim
+.netrwhist
+tags
+
+### VisualStudioCode ###
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+!.vscode/*.code-snippets
+
+.history/
+*.vsix
+.ionide/
+
+### Linux ###
+.fuse_hidden*
+.directory
+.Trash-*
+.nfs*
+
+### macOS ###
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._*
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+.AppleDB
+.AppleDesktop
+Network Trash Folder
+Temporary Items
+.apdisk
+*.icloud
+
+### Project-specific ###
+# Makefiles
+Makefile
+makefile
+*.mk
+
+# Binaries (keep if intentional; otherwise scope to /main etc.)
+main
+client
+server
+
+*-traceable
+
+# If these are generated artifacts, ignore them
+*.plist
+
+supported_c_compilers.txt
+supported_cxx_compilers.txt
+sanitizers.txt
+
+.flags
+cmake-build-*/
+build/
+build-*/
+
+.last-build-dir
+### Programming 101 transient (build/test/fuzz/debug output) ###
+test/build/
+test/build-*/
+fuzz/build-*/
+fuzz/findings/
+fuzz/artifacts/
+debug/
+debug-*/
+coverage/
+coverage-*/
+profile/
+profile-*/
+# NOTE: fuzz/corpus/ is the committed seed corpus — keep it.
