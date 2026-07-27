@@ -27,3 +27,7 @@ The current version is `1`. Extra fields depend on `kind`:
 
 Variable fields escape backslash, tab, newline, and carriage return as `\\`,
 `\t`, `\n`, and `\r`.
+
+Known `NOTE` values include `ENV_CONTRACT`, `ERROR_CONTRACT`, `ENV_USE`,
+`ERROR_USE`, `TRACE_USE`, and `ERROR_CHECK`. Consumers should ignore note values
+they do not understand.
