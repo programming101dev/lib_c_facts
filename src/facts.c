@@ -1,6 +1,4 @@
 #include "p101_c_facts/facts.h"
-#include <limits.h>
-#include <p101_c/p101_stdlib.h>
 #include <p101_c/p101_string.h>
 #include <stdint.h>
 
@@ -21,16 +19,13 @@ enum
     FACT_FLAG2_IDX        = 9,
     FACT_VALUE_FIELDS     = 8,
     FACT_INCLUDE_FIELDS   = 9,
-    FACT_FUNCTION_FIELDS  = 10,
-    JSON_NUMBER_BASE      = 10
+    FACT_FUNCTION_FIELDS  = 10
 };
 
 static size_t                split_fact_line(const struct p101_env *env, char *line, char *fields[], size_t field_count);
-static void                  unescape_fact_field(const struct p101_env *env, char *field);
 static char                 *find_char(char *text, char ch);
 static enum p101_c_fact_kind parse_kind(const struct p101_env *env, const char *text);
 static bool                  fact_text_bool(const struct p101_env *env, const char *text);
-static bool                  parse_size(const struct p101_env *env, struct p101_error *err, const char *text, size_t *value);
 static bool                  field_count_is_valid(enum p101_c_fact_kind kind, size_t field_count);
 
 enum p101_c_fact_status p101_c_fact_parse_line(const struct p101_env *env, struct p101_error *err, char *line, struct p101_c_fact *fact)
@@ -41,6 +36,7 @@ enum p101_c_fact_status p101_c_fact_parse_line(const struct p101_env *env, struc
     char                   *newline;
 
     P101_TRACE(env);
+    (void)err;
     status = P101_C_FACT_MALFORMED;
 
     if(line == NULL || fact == NULL)
@@ -86,7 +82,7 @@ enum p101_c_fact_status p101_c_fact_parse_line(const struct p101_env *env, struc
         goto done;
     }
 
-    if(!parse_size(env, err, fields[FACT_LINE_IDX], &fact->line))
+    if(!p101_env_event_parse_size_field(fields[FACT_LINE_IDX], &fact->line))
     {
         status = P101_C_FACT_MALFORMED;
         goto done;
@@ -199,7 +195,7 @@ static bool fact_text_bool(const struct p101_env *env, const char *text)
 
     P101_TRACE(env);
     ret_val = false;
-    if(text != NULL && p101_strcmp(env, text, "0") != 0)
+    if(text != NULL && p101_strcmp(env, text, "1") == 0)
     {
         ret_val = true;
     }
@@ -216,63 +212,24 @@ static size_t split_fact_line(const struct p101_env *env, char *line, char *fiel
     cursor = line;
     while(count < field_count)
     {
-        char *tab;
-
-        fields[count++] = cursor;
-        tab             = find_char(cursor, '\t');
-        if(tab == NULL)
+        fields[count] = p101_env_event_split(&cursor);
+        if(fields[count] == NULL)
         {
             break;
         }
-        *tab   = '\0';
-        cursor = tab + 1;
+        count++;
+        if(cursor == NULL)
+        {
+            break;
+        }
     }
 
     for(size_t i = 0; i < count; i++)
     {
-        unescape_fact_field(env, fields[i]);
+        p101_env_event_unescape_field(fields[i]);
     }
 
     return count;
-}
-
-static void unescape_fact_field(const struct p101_env *env, char *field)
-{
-    char *read_cursor;
-    char *write_cursor;
-
-    P101_TRACE(env);
-    read_cursor  = field;
-    write_cursor = field;
-    while(*read_cursor != '\0')
-    {
-        if(read_cursor[0] == '\\' && read_cursor[1] != '\0')
-        {
-            read_cursor++;
-            if(*read_cursor == 't')
-            {
-                *write_cursor++ = '\t';
-            }
-            else if(*read_cursor == 'n')
-            {
-                *write_cursor++ = '\n';
-            }
-            else if(*read_cursor == 'r')
-            {
-                *write_cursor++ = '\r';
-            }
-            else
-            {
-                *write_cursor++ = *read_cursor;
-            }
-            read_cursor++;
-        }
-        else
-        {
-            *write_cursor++ = *read_cursor++;
-        }
-    }
-    *write_cursor = '\0';
 }
 
 static char *find_char(char *text, char ch)
@@ -327,33 +284,6 @@ static enum p101_c_fact_kind parse_kind(const struct p101_env *env, const char *
         kind = P101_C_FACT_KIND_NOTE;
     }
     return kind;
-}
-
-static bool parse_size(const struct p101_env *env, struct p101_error *err, const char *text, size_t *value)
-{
-    bool          ok;
-    char         *end;
-    unsigned long parsed;
-
-    P101_TRACE(env);
-    ok     = false;
-    parsed = p101_strtoul(env, err, text, &end, JSON_NUMBER_BASE);
-    if(p101_error_has_error(err) || text == end || *end != '\0')
-    {
-        goto done;
-    }
-#if ULONG_MAX > SIZE_MAX
-    if(parsed > SIZE_MAX)
-    {
-        goto done;
-    }
-#endif
-
-    *value = parsed;
-    ok     = true;
-
-done:
-    return ok;
 }
 
 static bool field_count_is_valid(enum p101_c_fact_kind kind, size_t field_count)
