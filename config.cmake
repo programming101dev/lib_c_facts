@@ -43,6 +43,7 @@ set(p101_c_facts_HEADERS
 # Linked libraries required for this project
 set(p101_c_facts_LINK_LIBRARIES
         p101_error
+        p101_tool_event
         p101_env
         p101_c
         p101_posix

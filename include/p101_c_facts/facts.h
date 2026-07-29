@@ -8,7 +8,7 @@
 
 #define P101_C_FACT_TAG "P101FACT"
 #define P101_C_FACT_PREFIX "P101FACT\t"
-#define P101_C_FACT_VERSION "1"
+#define P101_C_FACT_VERSION "2"
 
 #ifdef __cplusplus
 extern "C"

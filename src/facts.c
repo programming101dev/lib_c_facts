@@ -1,5 +1,6 @@
 #include "p101_c_facts/facts.h"
 #include <p101_c/p101_string.h>
+#include <p101_tool_event/event.h>
 #include <stdint.h>
 
 enum
@@ -19,7 +20,8 @@ enum
     FACT_FLAG2_IDX        = 9,
     FACT_VALUE_FIELDS     = 8,
     FACT_INCLUDE_FIELDS   = 9,
-    FACT_FUNCTION_FIELDS  = 10
+    FACT_FUNCTION_FIELDS  = 10,
+    FACT_CALL_FIELDS      = 10
 };
 
 static size_t                split_fact_line(const struct p101_env *env, char *line, char *fields[], size_t field_count);
@@ -82,7 +84,7 @@ enum p101_c_fact_status p101_c_fact_parse_line(const struct p101_env *env, struc
         goto done;
     }
 
-    if(!p101_env_event_parse_size_field(fields[FACT_LINE_IDX], &fact->line))
+    if(!p101_tool_event_parse_size_field(fields[FACT_LINE_IDX], &fact->line))
     {
         status = P101_C_FACT_MALFORMED;
         goto done;
@@ -212,7 +214,7 @@ static size_t split_fact_line(const struct p101_env *env, char *line, char *fiel
     cursor = line;
     while(count < field_count)
     {
-        fields[count] = p101_env_event_split(&cursor);
+        fields[count] = p101_tool_event_split(&cursor);
         if(fields[count] == NULL)
         {
             break;
@@ -226,7 +228,7 @@ static size_t split_fact_line(const struct p101_env *env, char *line, char *fiel
 
     for(size_t i = 0; i < count; i++)
     {
-        p101_env_event_unescape_field(fields[i]);
+        p101_tool_event_unescape_field(fields[i]);
     }
 
     return count;
@@ -309,6 +311,8 @@ static bool field_count_is_valid(enum p101_c_fact_kind kind, size_t field_count)
             ret_val = field_count >= FACT_FUNCTION_FIELDS;
             break;
         case P101_C_FACT_KIND_CALL:
+            ret_val = field_count >= FACT_CALL_FIELDS;
+            break;
         case P101_C_FACT_KIND_TYPE:
         case P101_C_FACT_KIND_MACRO:
         case P101_C_FACT_KIND_NOTE:

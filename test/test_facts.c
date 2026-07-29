@@ -29,7 +29,7 @@ static enum p101_c_fact_status parse(char *line, struct p101_c_fact *fact)
 
 static void test_parse_function_fact(void)
 {
-    char                    line[] = "P101FACT\t1\tFUNCTION\t/tmp/demo.c\tdemo\t0\t42\thelper\t1\t0\n";
+    char                    line[] = "P101FACT\t2\tFUNCTION\t/tmp/demo.c\tdemo\t0\t42\thelper\t1\t0\n";
     struct p101_c_fact      fact;
     enum p101_c_fact_status status;
 
@@ -48,7 +48,7 @@ static void test_parse_function_fact(void)
 
 static void test_parse_include_fact(void)
 {
-    char               line[] = "P101FACT\t1\tINCLUDE\t/tmp/demo.c\tdemo\t0\t7\tp101_c/p101_string.h\t0\n";
+    char               line[] = "P101FACT\t2\tINCLUDE\t/tmp/demo.c\tdemo\t0\t7\tp101_c/p101_string.h\t0\n";
     struct p101_c_fact fact;
 
     TEST_ASSERT_EQUAL_INT(P101_C_FACT_OK, parse(line, &fact));
@@ -59,12 +59,14 @@ static void test_parse_include_fact(void)
 
 static void test_unescapes_fields(void)
 {
-    char               line[] = "P101FACT\t1\tCALL\t/tmp/a\\\\b.c\tm\t0\t3\tthing\\tname\n";
+    char               line[] = "P101FACT\t2\tCALL\t/tmp/a\\\\b.c\tm\t0\t3\tthing\\tname\t1\t1\n";
     struct p101_c_fact fact;
 
     TEST_ASSERT_EQUAL_INT(P101_C_FACT_OK, parse(line, &fact));
     TEST_ASSERT_EQUAL_STRING("/tmp/a\\b.c", fact.path);
     TEST_ASSERT_EQUAL_STRING("thing\tname", fact.value);
+    TEST_ASSERT_TRUE(fact.flag1);
+    TEST_ASSERT_TRUE(fact.flag2);
 }
 
 static void test_non_fact_line_is_other(void)
@@ -77,7 +79,7 @@ static void test_non_fact_line_is_other(void)
 
 static void test_bad_version_is_reported(void)
 {
-    char               line[] = "P101FACT\t2\tFILE\t/tmp/demo.c\tdemo\t0\t0\n";
+    char               line[] = "P101FACT\t1\tFILE\t/tmp/demo.c\tdemo\t0\t0\n";
     struct p101_c_fact fact;
 
     TEST_ASSERT_EQUAL_INT(P101_C_FACT_BAD_VERSION, parse(line, &fact));
@@ -85,7 +87,7 @@ static void test_bad_version_is_reported(void)
 
 static void test_malformed_fact_is_reported(void)
 {
-    char               line[] = "P101FACT\t1\tFUNCTION\t/tmp/demo.c\tdemo\t0\tline\thelper\t1\t0\n";
+    char               line[] = "P101FACT\t2\tFUNCTION\t/tmp/demo.c\tdemo\t0\tline\thelper\t1\t0\n";
     struct p101_c_fact fact;
 
     TEST_ASSERT_EQUAL_INT(P101_C_FACT_MALFORMED, parse(line, &fact));

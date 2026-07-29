@@ -50,6 +50,7 @@ static bool readable_file(const struct p101_env *env, const char *path)
     bool ret_val;
 
     P101_TRACE(env);
+    /* P101_ERROR_CONTRACT_ALLOW_NO_ERROR: access failure means unavailable. */
     ret_val = p101_access(env, NULL, path, R_OK) == 0;
     P101_TRACE_EXIT(env);
     return ret_val;
