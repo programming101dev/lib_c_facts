@@ -31,11 +31,13 @@ set(LIBRARY_TARGETS p101_c_facts)
 # Source files for the library
 set(p101_c_facts_SOURCES
         src/facts.c
+        src/project.c
 )
 
 # Header files for installation
 set(p101_c_facts_HEADERS
         include/p101_c_facts/facts.h
+        include/p101_c_facts/project.h
 )
 
 # Linked libraries required for this project
@@ -43,4 +45,5 @@ set(p101_c_facts_LINK_LIBRARIES
         p101_error
         p101_env
         p101_c
+        p101_posix
 )

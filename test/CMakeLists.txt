@@ -13,7 +13,7 @@ if (P101_TEST_COVERAGE)
     set(_COV --coverage)
 endif ()
 
-set(P101_LIBS p101_error p101_env p101_c)
+set(P101_LIBS p101_error p101_env p101_c p101_posix)
 set(P101_PUBLIC_INCLUDE_DIRS "" CACHE STRING "Extra p101 include dirs")
 set(P101_PUBLIC_LINK_DIRS "" CACHE STRING "Extra p101 link dirs")
 separate_arguments(P101_PUBLIC_INCLUDE_DIRS_LIST NATIVE_COMMAND "${P101_PUBLIC_INCLUDE_DIRS}")
@@ -38,6 +38,7 @@ endforeach ()
 
 set(P101_CODE_UNDER_TEST
         "${CMAKE_CURRENT_SOURCE_DIR}/../src/facts.c"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../src/project.c"
 )
 
 function(p101_add_test name)
