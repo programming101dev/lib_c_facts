@@ -93,6 +93,14 @@ static void test_malformed_fact_is_reported(void)
     TEST_ASSERT_EQUAL_INT(P101_C_FACT_MALFORMED, parse(line, &fact));
 }
 
+static void test_non_boolean_flag_is_malformed(void)
+{
+    char               line[] = "P101FACT\t2\tFUNCTION\t/tmp/demo.c\tdemo\t2\t4\thelper\t1\t0\n";
+    struct p101_c_fact fact;
+
+    TEST_ASSERT_EQUAL_INT(P101_C_FACT_MALFORMED, parse(line, &fact));
+}
+
 static void test_kind_names_are_stable(void)
 {
     TEST_ASSERT_EQUAL_STRING("FUNCTION", p101_c_fact_kind_name(P101_C_FACT_KIND_FUNCTION));
@@ -143,6 +151,7 @@ int main(void)
     RUN_TEST(test_non_fact_line_is_other);
     RUN_TEST(test_bad_version_is_reported);
     RUN_TEST(test_malformed_fact_is_reported);
+    RUN_TEST(test_non_boolean_flag_is_malformed);
     RUN_TEST(test_kind_names_are_stable);
     RUN_TEST(test_finds_versioned_clang_compile_database);
     return UNITY_END();

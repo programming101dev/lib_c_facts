@@ -27,7 +27,7 @@ enum
 static size_t                split_fact_line(const struct p101_env *env, char *line, char *fields[], size_t field_count);
 static char                 *find_char(char *text, char ch);
 static enum p101_c_fact_kind parse_kind(const struct p101_env *env, const char *text);
-static bool                  fact_text_bool(const struct p101_env *env, const char *text);
+static bool                  parse_fact_bool(const struct p101_env *env, const char *text, bool *value);
 static bool                  field_count_is_valid(enum p101_c_fact_kind kind, size_t field_count);
 
 enum p101_c_fact_status p101_c_fact_parse_line(const struct p101_env *env, struct p101_error *err, char *line, struct p101_c_fact *fact)
@@ -37,7 +37,7 @@ enum p101_c_fact_status p101_c_fact_parse_line(const struct p101_env *env, struc
     size_t                  field_count;
     char                   *newline;
 
-    P101_TRACE(env);
+    P101_TRACE_SCOPE(env);
     (void)err;
     status = P101_C_FACT_MALFORMED;
 
@@ -90,9 +90,13 @@ enum p101_c_fact_status p101_c_fact_parse_line(const struct p101_env *env, struc
         goto done;
     }
 
-    fact->path      = fields[FACT_PATH_IDX];
-    fact->module    = fields[FACT_MODULE_IDX];
-    fact->is_header = fact_text_bool(env, fields[FACT_IS_HEADER_IDX]);
+    fact->path   = fields[FACT_PATH_IDX];
+    fact->module = fields[FACT_MODULE_IDX];
+    if(!parse_fact_bool(env, fields[FACT_IS_HEADER_IDX], &fact->is_header))
+    {
+        status = P101_C_FACT_MALFORMED;
+        goto done;
+    }
 
     if(field_count > FACT_VALUE_IDX)
     {
@@ -100,11 +104,19 @@ enum p101_c_fact_status p101_c_fact_parse_line(const struct p101_env *env, struc
     }
     if(field_count > FACT_FLAG1_IDX)
     {
-        fact->flag1 = fact_text_bool(env, fields[FACT_FLAG1_IDX]);
+        if(!parse_fact_bool(env, fields[FACT_FLAG1_IDX], &fact->flag1))
+        {
+            status = P101_C_FACT_MALFORMED;
+            goto done;
+        }
     }
     if(field_count > FACT_FLAG2_IDX)
     {
-        fact->flag2 = fact_text_bool(env, fields[FACT_FLAG2_IDX]);
+        if(!parse_fact_bool(env, fields[FACT_FLAG2_IDX], &fact->flag2))
+        {
+            status = P101_C_FACT_MALFORMED;
+            goto done;
+        }
     }
 
     status = P101_C_FACT_OK;
@@ -191,17 +203,24 @@ const char *p101_c_fact_status_name(enum p101_c_fact_status status)
     return name;
 }
 
-static bool fact_text_bool(const struct p101_env *env, const char *text)
+static bool parse_fact_bool(const struct p101_env *env, const char *text, bool *value)
 {
-    bool ret_val;
-
-    P101_TRACE(env);
-    ret_val = false;
-    if(text != NULL && p101_strcmp(env, text, "1") == 0)
+    P101_TRACE_SCOPE(env);
+    if(text == NULL || value == NULL)
     {
-        ret_val = true;
+        return false;
     }
-    return ret_val;
+    if(p101_strcmp(env, text, "0") == 0)
+    {
+        *value = false;
+        return true;
+    }
+    if(p101_strcmp(env, text, "1") == 0)
+    {
+        *value = true;
+        return true;
+    }
+    return false;
 }
 
 static size_t split_fact_line(const struct p101_env *env, char *line, char *fields[], size_t field_count)
@@ -209,7 +228,7 @@ static size_t split_fact_line(const struct p101_env *env, char *line, char *fiel
     size_t count;
     char  *cursor;
 
-    P101_TRACE(env);
+    P101_TRACE_SCOPE(env);
     count  = 0U;
     cursor = line;
     while(count < field_count)
@@ -255,7 +274,7 @@ static enum p101_c_fact_kind parse_kind(const struct p101_env *env, const char *
 {
     enum p101_c_fact_kind kind;
 
-    P101_TRACE(env);
+    P101_TRACE_SCOPE(env);
     kind = P101_C_FACT_KIND_UNKNOWN;
     if(p101_strcmp(env, text, "FILE") == 0)
     {
