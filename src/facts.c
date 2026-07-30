@@ -8,7 +8,6 @@ enum
     FACT_PREFIX_LEN       = 9,
     FACT_MAX_FIELDS       = 16,
     FACT_BASE_FIELD_COUNT = 7,
-    FACT_TAG_IDX          = 0,
     FACT_VERSION_IDX      = 1,
     FACT_KIND_IDX         = 2,
     FACT_PATH_IDX         = 3,
@@ -65,7 +64,11 @@ enum p101_c_fact_status p101_c_fact_parse_line(const struct p101_env *env, struc
     }
 
     field_count = split_fact_line(env, line, fields, FACT_MAX_FIELDS);
-    if(field_count < FACT_BASE_FIELD_COUNT || p101_strcmp(env, fields[FACT_TAG_IDX], P101_C_FACT_TAG) != 0)
+    /*
+     * The prefix check above already proves that field zero is P101FACT.
+     * Keeping a second tag comparison here would be an unreachable branch.
+     */
+    if(field_count < FACT_BASE_FIELD_COUNT || field_count > FACT_MAX_FIELDS)
     {
         status = P101_C_FACT_MALFORMED;
         goto done;
@@ -206,10 +209,6 @@ const char *p101_c_fact_status_name(enum p101_c_fact_status status)
 static bool parse_fact_bool(const struct p101_env *env, const char *text, bool *value)
 {
     P101_TRACE_SCOPE(env);
-    if(text == NULL || value == NULL)
-    {
-        return false;
-    }
     if(p101_strcmp(env, text, "0") == 0)
     {
         *value = false;
@@ -231,18 +230,15 @@ static size_t split_fact_line(const struct p101_env *env, char *line, char *fiel
     P101_TRACE_SCOPE(env);
     count  = 0U;
     cursor = line;
-    while(count < field_count)
+    while(count < field_count && cursor != NULL)
     {
         fields[count] = p101_tool_event_split(&cursor);
-        if(fields[count] == NULL)
-        {
-            break;
-        }
         count++;
-        if(cursor == NULL)
-        {
-            break;
-        }
+    }
+
+    if(count == field_count && cursor != NULL)
+    {
+        return field_count + 1U;
     }
 
     for(size_t i = 0; i < count; i++)
@@ -258,7 +254,7 @@ static char *find_char(char *text, char ch)
     char *ret_val;
 
     ret_val = NULL;
-    while(text != NULL && *text != '\0')
+    while(*text != '\0')
     {
         if(*text == ch)
         {
@@ -309,41 +305,16 @@ static enum p101_c_fact_kind parse_kind(const struct p101_env *env, const char *
 
 static bool field_count_is_valid(enum p101_c_fact_kind kind, size_t field_count)
 {
-    bool ret_val;
+    static const size_t minimum_fields[] = {
+        [P101_C_FACT_KIND_UNKNOWN]  = 0U,
+        [P101_C_FACT_KIND_FILE]     = FACT_BASE_FIELD_COUNT,
+        [P101_C_FACT_KIND_INCLUDE]  = FACT_INCLUDE_FIELDS,
+        [P101_C_FACT_KIND_FUNCTION] = FACT_FUNCTION_FIELDS,
+        [P101_C_FACT_KIND_CALL]     = FACT_CALL_FIELDS,
+        [P101_C_FACT_KIND_TYPE]     = FACT_VALUE_FIELDS,
+        [P101_C_FACT_KIND_MACRO]    = FACT_VALUE_FIELDS,
+        [P101_C_FACT_KIND_NOTE]     = FACT_VALUE_FIELDS,
+    };
 
-#ifdef __clang__
-    #pragma clang diagnostic push
-    #pragma clang diagnostic ignored "-Wcovered-switch-default"
-#endif
-    switch(kind)
-    {
-        case P101_C_FACT_KIND_UNKNOWN:
-            ret_val = true;
-            break;
-        case P101_C_FACT_KIND_FILE:
-            ret_val = field_count >= FACT_BASE_FIELD_COUNT;
-            break;
-        case P101_C_FACT_KIND_INCLUDE:
-            ret_val = field_count >= FACT_INCLUDE_FIELDS;
-            break;
-        case P101_C_FACT_KIND_FUNCTION:
-            ret_val = field_count >= FACT_FUNCTION_FIELDS;
-            break;
-        case P101_C_FACT_KIND_CALL:
-            ret_val = field_count >= FACT_CALL_FIELDS;
-            break;
-        case P101_C_FACT_KIND_TYPE:
-        case P101_C_FACT_KIND_MACRO:
-        case P101_C_FACT_KIND_NOTE:
-            ret_val = field_count >= FACT_VALUE_FIELDS;
-            break;
-        default:
-            ret_val = false;
-            break;
-    }
-#ifdef __clang__
-    #pragma clang diagnostic pop
-#endif
-
-    return ret_val;
+    return field_count >= minimum_fields[kind];
 }

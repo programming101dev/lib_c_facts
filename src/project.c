@@ -82,7 +82,7 @@ bool p101_c_facts_find_clang_compile_database(const struct p101_env *env, struct
     if(readable_file(env, last_build_path))
     {
         stream = p101_fopen(env, err, last_build_path, "r");
-        if(stream == NULL || p101_error_has_error(err))
+        if(stream == NULL)
         {
             goto done;
         }
@@ -129,6 +129,10 @@ bool p101_c_facts_find_clang_compile_database(const struct p101_env *env, struct
     }
 
 done:
+    if(path != NULL && path_size > 0U && !found)
+    {
+        path[0] = '\0';
+    }
     P101_TRACE_EXIT(env);
     return found;
 }

@@ -1,6 +1,7 @@
 #include "p101_c_facts/facts.h"
 #include "p101_c_facts/project.h"
 #include "unity.h"
+#include <errno.h>
 #include <p101_c/p101_string.h>
 #include <stdio.h>
 #include <string.h>
@@ -9,6 +10,18 @@
 
 static struct p101_error *error;
 static struct p101_env   *env;
+static unsigned int       temporary_sequence;
+
+struct fault_plan
+{
+    const char *call_name;
+    size_t      occurrence;
+};
+
+static void make_temporary_directory(char *directory, size_t size);
+static void write_text_file(const char *path, const char *text);
+static int  inject_selected_fault(const struct p101_env *fault_env, const char *call_name, void *user_data);
+static void create_directory(const char *path);
 
 void setUp(void)
 {
@@ -25,6 +38,44 @@ void tearDown(void)
 static enum p101_c_fact_status parse(char *line, struct p101_c_fact *fact)
 {
     return p101_c_fact_parse_line(env, error, line, fact);
+}
+
+static void make_temporary_directory(char *directory, size_t size)
+{
+    (void)snprintf(directory, size, "/tmp/p101-c-facts-%ld-%u", (long)getpid(), temporary_sequence++);
+    TEST_ASSERT_EQUAL_INT(0, mkdir(directory, 0700));
+}
+
+static void write_text_file(const char *path, const char *text)
+{
+    FILE *stream;
+
+    stream = fopen(path, "w");
+    TEST_ASSERT_NOT_NULL(stream);
+    if(stream != NULL)
+    {
+        TEST_ASSERT_TRUE(fputs(text, stream) >= 0);
+        TEST_ASSERT_EQUAL_INT(0, fclose(stream));
+    }
+}
+
+static void create_directory(const char *path)
+{
+    TEST_ASSERT_EQUAL_INT(0, mkdir(path, 0700));
+}
+
+static int inject_selected_fault(const struct p101_env *fault_env, const char *call_name, void *user_data)
+{
+    struct fault_plan *plan;
+
+    (void)fault_env;
+    plan = (struct fault_plan *)user_data;
+    if(strcmp(call_name, plan->call_name) != 0 || plan->occurrence == 0U)
+    {
+        return 0;
+    }
+    plan->occurrence--;
+    return plan->occurrence == 0U ? EIO : 0;
 }
 
 static void test_parse_function_fact(void)
@@ -101,10 +152,88 @@ static void test_non_boolean_flag_is_malformed(void)
     TEST_ASSERT_EQUAL_INT(P101_C_FACT_MALFORMED, parse(line, &fact));
 }
 
-static void test_kind_names_are_stable(void)
+static void test_parse_all_fact_kinds_and_names(void)
 {
-    TEST_ASSERT_EQUAL_STRING("FUNCTION", p101_c_fact_kind_name(P101_C_FACT_KIND_FUNCTION));
+    static const char *const lines[] = {
+        "P101FACT\t2\tFILE\t/tmp/demo.c\tdemo\t0\t1\r",
+        "P101FACT\t2\tINCLUDE\t/tmp/demo.c\tdemo\t1\t2\tstdio.h\t1\n",
+        "P101FACT\t2\tFUNCTION\t/tmp/demo.c\tdemo\t0\t3\tmain\t0\t1\n",
+        "P101FACT\t2\tCALL\t/tmp/demo.c\tdemo\t0\t4\tputs\t1\t0\n",
+        "P101FACT\t2\tTYPE\t/tmp/demo.c\tdemo\t0\t5\twidget\n",
+        "P101FACT\t2\tMACRO\t/tmp/demo.c\tdemo\t0\t6\tLIMIT\n",
+        "P101FACT\t2\tNOTE\t/tmp/demo.c\tdemo\t0\t7\tadvice\n",
+        "P101FACT\t2\tNOT-A-KIND\t/tmp/demo.c\tdemo\t0\t8\n",
+    };
+
+    static const enum p101_c_fact_kind kinds[] = {
+        P101_C_FACT_KIND_FILE,
+        P101_C_FACT_KIND_INCLUDE,
+        P101_C_FACT_KIND_FUNCTION,
+        P101_C_FACT_KIND_CALL,
+        P101_C_FACT_KIND_TYPE,
+        P101_C_FACT_KIND_MACRO,
+        P101_C_FACT_KIND_NOTE,
+        P101_C_FACT_KIND_UNKNOWN,
+    };
+
+    static const char *const names[] = {"FILE", "INCLUDE", "FUNCTION", "CALL", "TYPE", "MACRO", "NOTE", "UNKNOWN"};
+
+    for(size_t index = 0U; index < sizeof(lines) / sizeof(lines[0]); index++)
+    {
+        char               line[160];
+        struct p101_c_fact fact;
+
+        (void)snprintf(line, sizeof(line), "%s", lines[index]);
+        TEST_ASSERT_EQUAL_INT(P101_C_FACT_OK, parse(line, &fact));
+        TEST_ASSERT_EQUAL_INT(kinds[index], fact.kind);
+        TEST_ASSERT_EQUAL_STRING(names[index], p101_c_fact_kind_name(kinds[index]));
+    }
+    TEST_ASSERT_EQUAL_STRING("unknown", p101_c_fact_kind_name((enum p101_c_fact_kind)99));
+}
+
+static void test_status_names_are_stable(void)
+{
+    TEST_ASSERT_EQUAL_STRING("ok", p101_c_fact_status_name(P101_C_FACT_OK));
+    TEST_ASSERT_EQUAL_STRING("other", p101_c_fact_status_name(P101_C_FACT_OTHER));
     TEST_ASSERT_EQUAL_STRING("bad_version", p101_c_fact_status_name(P101_C_FACT_BAD_VERSION));
+    TEST_ASSERT_EQUAL_STRING("malformed", p101_c_fact_status_name(P101_C_FACT_MALFORMED));
+    TEST_ASSERT_EQUAL_STRING("unknown", p101_c_fact_status_name((enum p101_c_fact_status)99));
+}
+
+static void test_rejects_invalid_fact_shapes(void)
+{
+    static const char *const malformed[] = {
+        "P101FACT\t2\n",
+        "P101FACT\t2\tFILE\t/tmp/demo.c\tdemo\t0\tnot-a-line\n",
+        "P101FACT\t2\tFILE\t/tmp/demo.c\tdemo\tmaybe\t1\n",
+        "P101FACT\t2\tINCLUDE\t/tmp/demo.c\tdemo\t0\t1\tstdio.h\n",
+        "P101FACT\t2\tFUNCTION\t/tmp/demo.c\tdemo\t0\t1\tmain\t1\n",
+        "P101FACT\t2\tCALL\t/tmp/demo.c\tdemo\t0\t1\tputs\t1\n",
+        "P101FACT\t2\tTYPE\t/tmp/demo.c\tdemo\t0\t1\n",
+        "P101FACT\t2\tMACRO\t/tmp/demo.c\tdemo\t0\t1\n",
+        "P101FACT\t2\tNOTE\t/tmp/demo.c\tdemo\t0\t1\n",
+        "P101FACT\t2\tFUNCTION\t/tmp/demo.c\tdemo\t0\t1\tmain\tbad\t0\n",
+        "P101FACT\t2\tFUNCTION\t/tmp/demo.c\tdemo\t0\t1\tmain\t1\tbad\n",
+        "P101FACT\t2\tFILE\t/tmp/demo.c\tdemo\t0\t1\ta\tb\tc\td\te\tf\tg\th\ti\tj\n",
+    };
+    struct p101_c_fact fact;
+    char               valid[] = "P101FACT\t2\tFILE\t/tmp/demo.c\tdemo\t0\t1\n";
+
+    TEST_ASSERT_EQUAL_INT(P101_C_FACT_MALFORMED, p101_c_fact_parse_line(env, error, NULL, &fact));
+    TEST_ASSERT_EQUAL_INT(P101_C_FACT_MALFORMED, p101_c_fact_parse_line(env, error, valid, NULL));
+    for(size_t index = 0U; index < sizeof(malformed) / sizeof(malformed[0]); index++)
+    {
+        char line[192];
+
+        (void)snprintf(line, sizeof(line), "%s", malformed[index]);
+        TEST_ASSERT_EQUAL_INT(P101_C_FACT_MALFORMED, parse(line, &fact));
+    }
+
+    {
+        char maximum_fields[] = "P101FACT\t2\tUNKNOWN\t/tmp/demo.c\tdemo\t0\t1\tvalue\t0\t1\ta\tb\tc\td\te\tf\n";
+
+        TEST_ASSERT_EQUAL_INT(P101_C_FACT_OK, parse(maximum_fields, &fact));
+    }
 }
 
 static void test_finds_versioned_clang_compile_database(void)
@@ -142,6 +271,215 @@ static void test_finds_versioned_clang_compile_database(void)
     TEST_ASSERT_EQUAL_INT(0, rmdir(directory));
 }
 
+static void test_compile_database_fallbacks_and_absolute_paths(void)
+{
+    char directory[256];
+    char build_directory[320];
+    char nested_directory[320];
+    char database[384];
+    char fallback_directory[320];
+    char fallback_database[384];
+    char absolute_directory[320];
+    char absolute_database[384];
+    char last_build[320];
+    char found[384];
+
+    make_temporary_directory(directory, sizeof(directory));
+    (void)snprintf(fallback_directory, sizeof(fallback_directory), "%s/build-clang", directory);
+    (void)snprintf(fallback_database, sizeof(fallback_database), "%s/compile_commands.json", fallback_directory);
+    (void)snprintf(last_build, sizeof(last_build), "%s/.last-build-dir", directory);
+    create_directory(fallback_directory);
+    write_text_file(fallback_database, "[]\n");
+    TEST_ASSERT_TRUE(p101_c_facts_find_clang_compile_database(env, error, directory, found, sizeof(found)));
+    TEST_ASSERT_EQUAL_STRING(fallback_database, found);
+
+    write_text_file(last_build, "build-gcc\n");
+    TEST_ASSERT_TRUE(p101_c_facts_find_clang_compile_database(env, error, directory, found, sizeof(found)));
+    TEST_ASSERT_EQUAL_STRING(fallback_database, found);
+
+    write_text_file(last_build, "build-clang");
+    TEST_ASSERT_TRUE(p101_c_facts_find_clang_compile_database(env, error, directory, found, sizeof(found)));
+    TEST_ASSERT_EQUAL_STRING(fallback_database, found);
+
+    write_text_file(last_build, "nested/build-clangx");
+    TEST_ASSERT_TRUE(p101_c_facts_find_clang_compile_database(env, error, directory, found, sizeof(found)));
+    TEST_ASSERT_EQUAL_STRING(fallback_database, found);
+
+    (void)snprintf(nested_directory, sizeof(nested_directory), "%s/nested", directory);
+    create_directory(nested_directory);
+    (void)snprintf(build_directory, sizeof(build_directory), "%s/nested/build-clang-23", directory);
+    create_directory(build_directory);
+    (void)snprintf(database, sizeof(database), "%s/compile_commands.json", build_directory);
+    write_text_file(database, "[]\n");
+    write_text_file(last_build, "nested/build-clang-23\r\n");
+    TEST_ASSERT_TRUE(p101_c_facts_find_clang_compile_database(env, error, directory, found, sizeof(found)));
+    TEST_ASSERT_EQUAL_STRING(database, found);
+
+    (void)snprintf(absolute_directory, sizeof(absolute_directory), "/tmp/build-clang-p101-c-facts-%ld-%u", (long)getpid(), temporary_sequence++);
+    create_directory(absolute_directory);
+    (void)snprintf(absolute_database, sizeof(absolute_database), "%s/compile_commands.json", absolute_directory);
+    write_text_file(absolute_database, "[]\n");
+    write_text_file(last_build, absolute_directory);
+    TEST_ASSERT_TRUE(p101_c_facts_find_clang_compile_database(env, error, directory, found, sizeof(found)));
+    TEST_ASSERT_EQUAL_STRING(absolute_database, found);
+
+    write_text_file(last_build, "");
+    TEST_ASSERT_TRUE(p101_c_facts_find_clang_compile_database(env, error, directory, found, sizeof(found)));
+    TEST_ASSERT_EQUAL_STRING(fallback_database, found);
+
+    {
+        FILE *stream = fopen(last_build, "wb");
+
+        TEST_ASSERT_NOT_NULL(stream);
+        if(stream != NULL)
+        {
+            TEST_ASSERT_EQUAL_size_t(1U, fwrite("", 1U, 1U, stream));
+            TEST_ASSERT_EQUAL_INT(0, fclose(stream));
+        }
+    }
+    TEST_ASSERT_TRUE(p101_c_facts_find_clang_compile_database(env, error, directory, found, sizeof(found)));
+    TEST_ASSERT_EQUAL_STRING(fallback_database, found);
+
+    TEST_ASSERT_EQUAL_INT(0, unlink(last_build));
+    TEST_ASSERT_EQUAL_INT(0, unlink(absolute_database));
+    TEST_ASSERT_EQUAL_INT(0, rmdir(absolute_directory));
+    TEST_ASSERT_EQUAL_INT(0, unlink(database));
+    TEST_ASSERT_EQUAL_INT(0, rmdir(build_directory));
+    TEST_ASSERT_EQUAL_INT(0, rmdir(nested_directory));
+    TEST_ASSERT_EQUAL_INT(0, unlink(fallback_database));
+    TEST_ASSERT_EQUAL_INT(0, rmdir(fallback_directory));
+    TEST_ASSERT_EQUAL_INT(0, rmdir(directory));
+}
+
+static void test_compile_database_missing_and_invalid_arguments(void)
+{
+    char               directory[256];
+    char               found[384];
+    char               tiny[1];
+    char               long_directory[5000];
+    struct p101_error *local_error;
+    struct p101_env   *local_env;
+
+    make_temporary_directory(directory, sizeof(directory));
+    TEST_ASSERT_FALSE(p101_c_facts_find_clang_compile_database(env, error, directory, found, sizeof(found)));
+    TEST_ASSERT_EQUAL_STRING("", found);
+    TEST_ASSERT_EQUAL_INT(0, rmdir(directory));
+
+    local_error = p101_error_create(false);
+    local_env   = p101_env_create(local_error, NULL);
+    TEST_ASSERT_FALSE(p101_c_facts_find_clang_compile_database(local_env, local_error, NULL, found, sizeof(found)));
+    TEST_ASSERT_TRUE(p101_error_has_error(local_error));
+    p101_env_destroy(local_env);
+    p101_error_destroy(local_error);
+
+    local_error = p101_error_create(false);
+    local_env   = p101_env_create(local_error, NULL);
+    TEST_ASSERT_FALSE(p101_c_facts_find_clang_compile_database(local_env, local_error, ".", NULL, sizeof(found)));
+    TEST_ASSERT_TRUE(p101_error_has_error(local_error));
+    p101_env_destroy(local_env);
+    p101_error_destroy(local_error);
+
+    local_error = p101_error_create(false);
+    local_env   = p101_env_create(local_error, NULL);
+    TEST_ASSERT_FALSE(p101_c_facts_find_clang_compile_database(local_env, local_error, ".", found, 0U));
+    TEST_ASSERT_TRUE(p101_error_has_error(local_error));
+    p101_env_destroy(local_env);
+    p101_error_destroy(local_error);
+
+    make_temporary_directory(directory, sizeof(directory));
+    local_error = p101_error_create(false);
+    local_env   = p101_env_create(local_error, NULL);
+    TEST_ASSERT_FALSE(p101_c_facts_find_clang_compile_database(local_env, local_error, directory, tiny, sizeof(tiny)));
+    TEST_ASSERT_FALSE(p101_error_has_error(local_error));
+    p101_env_destroy(local_env);
+    p101_error_destroy(local_error);
+    TEST_ASSERT_EQUAL_INT(0, rmdir(directory));
+
+    memset(long_directory, 'x', sizeof(long_directory) - 1U);
+    long_directory[sizeof(long_directory) - 1U] = '\0';
+    local_error                                 = p101_error_create(false);
+    local_env                                   = p101_env_create(local_error, NULL);
+    TEST_ASSERT_FALSE(p101_c_facts_find_clang_compile_database(local_env, local_error, long_directory, found, sizeof(found)));
+    TEST_ASSERT_FALSE(p101_error_has_error(local_error));
+    p101_env_destroy(local_env);
+    p101_error_destroy(local_error);
+}
+
+static void test_compile_database_wrapper_failures(void)
+{
+    static const struct fault_plan plans[] = {
+        {"snprintf", 1U},
+        {"snprintf", 2U},
+        {"fopen",    1U},
+        {"fgets",    1U},
+        {"fclose",   1U},
+        {"access",   1U},
+    };
+
+    for(size_t index = 0U; index < sizeof(plans) / sizeof(plans[0]); index++)
+    {
+        char               directory[256];
+        char               build_directory[320];
+        char               database[384];
+        char               last_build[320];
+        char               found[384];
+        struct fault_plan  plan;
+        struct p101_error *local_error;
+        struct p101_env   *local_env;
+
+        make_temporary_directory(directory, sizeof(directory));
+        (void)snprintf(build_directory, sizeof(build_directory), "%s/build-clang-22", directory);
+        (void)snprintf(database, sizeof(database), "%s/compile_commands.json", build_directory);
+        (void)snprintf(last_build, sizeof(last_build), "%s/.last-build-dir", directory);
+        create_directory(build_directory);
+        write_text_file(database, "[]\n");
+        write_text_file(last_build, "build-clang-22\n");
+
+        plan        = plans[index];
+        local_error = p101_error_create(false);
+        local_env   = p101_env_create(local_error, NULL);
+        p101_env_set_fault_injector(local_env, inject_selected_fault, &plan);
+        (void)p101_c_facts_find_clang_compile_database(local_env, local_error, directory, found, sizeof(found));
+        if(strcmp(plans[index].call_name, "access") == 0)
+        {
+            TEST_ASSERT_FALSE(p101_error_has_error(local_error));
+        }
+        else
+        {
+            TEST_ASSERT_TRUE(p101_error_has_error(local_error));
+        }
+        p101_env_destroy(local_env);
+        p101_error_destroy(local_error);
+
+        TEST_ASSERT_EQUAL_INT(0, unlink(last_build));
+        TEST_ASSERT_EQUAL_INT(0, unlink(database));
+        TEST_ASSERT_EQUAL_INT(0, rmdir(build_directory));
+        TEST_ASSERT_EQUAL_INT(0, rmdir(directory));
+    }
+}
+
+static void test_compile_database_fallback_format_failure(void)
+{
+    char               directory[256];
+    char               found[384];
+    struct fault_plan  plan;
+    struct p101_error *local_error;
+    struct p101_env   *local_env;
+
+    make_temporary_directory(directory, sizeof(directory));
+    plan.call_name  = "snprintf";
+    plan.occurrence = 2U;
+    local_error     = p101_error_create(false);
+    local_env       = p101_env_create(local_error, NULL);
+    p101_env_set_fault_injector(local_env, inject_selected_fault, &plan);
+    TEST_ASSERT_FALSE(p101_c_facts_find_clang_compile_database(local_env, local_error, directory, found, sizeof(found)));
+    TEST_ASSERT_TRUE(p101_error_has_error(local_error));
+    TEST_ASSERT_EQUAL_STRING("", found);
+    p101_env_destroy(local_env);
+    p101_error_destroy(local_error);
+    TEST_ASSERT_EQUAL_INT(0, rmdir(directory));
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -152,7 +490,13 @@ int main(void)
     RUN_TEST(test_bad_version_is_reported);
     RUN_TEST(test_malformed_fact_is_reported);
     RUN_TEST(test_non_boolean_flag_is_malformed);
-    RUN_TEST(test_kind_names_are_stable);
+    RUN_TEST(test_parse_all_fact_kinds_and_names);
+    RUN_TEST(test_status_names_are_stable);
+    RUN_TEST(test_rejects_invalid_fact_shapes);
     RUN_TEST(test_finds_versioned_clang_compile_database);
+    RUN_TEST(test_compile_database_fallbacks_and_absolute_paths);
+    RUN_TEST(test_compile_database_missing_and_invalid_arguments);
+    RUN_TEST(test_compile_database_wrapper_failures);
+    RUN_TEST(test_compile_database_fallback_format_failure);
     return UNITY_END();
 }
