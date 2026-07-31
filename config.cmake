@@ -1,7 +1,7 @@
 # Project metadata
 set(PROJECT_NAME "p101_c_facts")
 set(PROJECT_VERSION "0.0.1")
-set(PROJECT_DESCRIPTION "Programming 101 C fact stream parser")
+set(PROJECT_DESCRIPTION "Programming 101 native libclang analysis and C fact stream library")
 set(PROJECT_LANGUAGE "C")
 
 set(CMAKE_C_STANDARD 17)
@@ -30,12 +30,16 @@ set(LIBRARY_TARGETS p101_c_facts)
 
 # Source files for the library
 set(p101_c_facts_SOURCES
+        src/analysis.c
+        src/compile_command.c
         src/facts.c
         src/project.c
 )
 
 # Header files for installation
 set(p101_c_facts_HEADERS
+        include/p101_c_facts/analysis.h
+        include/p101_c_facts/compile_command.h
         include/p101_c_facts/facts.h
         include/p101_c_facts/project.h
 )

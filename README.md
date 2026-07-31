@@ -1,11 +1,14 @@
 # lib_c_facts
 
-`lib_c_facts` owns the shared `P101FACT` record format used by p101 tools that
-need C project facts without each tool inventing its own C parser.
+`lib_c_facts` owns both native libclang acquisition and the shared `P101FACT`
+record format used by p101 tools that need C project facts without each tool
+inventing its own C parser.
 
-The producer today is `p101-wrapper-audit --emit-module-facts`, which uses
-Clang's AST and emits tab-separated records. Consumers, such as
-`p101-module-map`, parse those records through this library.
+`p101-wrapper-audit` and `p101-c-facts` call the library's acquisition API and
+emit tab-separated records. Consumers, such as `p101-module-map`, parse those
+records through this library. `p101-mutation-check` consumes the same native
+analysis records directly so source extents do not make a text-format
+round-trip.
 
 ## Record format
 
@@ -38,9 +41,14 @@ instead of maintaining private lists of wrapper names.
 
 ## Ownership and compatibility
 
-`p101-wrapper-audit` owns the Clang parsing pass and emits the snapshot.
-`lib_c_facts` owns this versioned parser contract. Error handling, module-design
-thresholds, and other judgments remain in their individual tools.
+`lib_c_facts` owns the Clang parsing pass and this versioned parser contract.
+Error handling, wrapper-boundary rules, module-design thresholds, mutation
+policy, and other judgments remain in their individual tools.
 
 Version 1 is intentionally rejected. A consumer must not silently interpret a
 snapshot with different call semantics.
+
+The acquisition API reports only translation units admitted by the requested
+paths and compile database. Its error-flow notes use resolved AST calls and
+source locations, but deliberately conservative statement-path reasoning; they
+are evidence for a teaching policy, not a compiler control-flow proof.

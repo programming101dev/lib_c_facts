@@ -68,20 +68,38 @@ foreach (_l IN LISTS P101_LIBS)
 endforeach ()
 
 set(P101_CODE_UNDER_TEST
+        "${CMAKE_CURRENT_SOURCE_DIR}/../src/analysis.c"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../src/compile_command.c"
         "${CMAKE_CURRENT_SOURCE_DIR}/../src/facts.c"
         "${CMAKE_CURRENT_SOURCE_DIR}/../src/project.c"
 )
+
+file(GLOB _P101_LLVM_PREFIXES LIST_DIRECTORIES true "/usr/local/llvm*" "/usr/lib/llvm-*")
+set(_P101_LLVM_INCLUDE_HINTS "")
+set(_P101_LLVM_LIBRARY_HINTS "")
+foreach(_P101_LLVM_PREFIX IN LISTS _P101_LLVM_PREFIXES)
+    list(APPEND _P101_LLVM_INCLUDE_HINTS "${_P101_LLVM_PREFIX}/include")
+    list(APPEND _P101_LLVM_LIBRARY_HINTS "${_P101_LLVM_PREFIX}/lib")
+endforeach()
+find_path(P101_TEST_LIBCLANG_INCLUDE_DIR NAMES clang-c/Index.h
+        HINTS /opt/homebrew/opt/llvm/include /usr/local/opt/llvm/include ${_P101_LLVM_INCLUDE_HINTS}
+        REQUIRED)
+find_library(P101_TEST_LIBCLANG_LIBRARY NAMES clang libclang
+        HINTS /opt/homebrew/opt/llvm/lib /usr/local/opt/llvm/lib ${_P101_LLVM_LIBRARY_HINTS}
+        REQUIRED)
 
 function(p101_add_test name)
     add_executable(${name} ${ARGN} ${P101_CODE_UNDER_TEST})
     target_include_directories(${name} PRIVATE
             "${CMAKE_CURRENT_SOURCE_DIR}/../include"
+            "${P101_TEST_LIBCLANG_INCLUDE_DIR}"
             ${_P101_INC_DIRS}
     )
-    target_link_libraries(${name} PRIVATE unity ${_P101_RESOLVED})
+    target_link_libraries(${name} PRIVATE unity ${_P101_RESOLVED} "${P101_TEST_LIBCLANG_LIBRARY}")
     target_compile_options(${name} PRIVATE ${_COV})
     target_link_options(${name} PRIVATE ${_COV})
     add_test(NAME ${name} COMMAND ${name})
 endfunction()
 
 p101_add_test(test_facts test_facts.c)
+p101_add_test(test_analysis test_analysis.c)
