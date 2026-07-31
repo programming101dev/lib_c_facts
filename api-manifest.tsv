@@ -1,0 +1,5 @@
+function	current_source
+p101_c_fact_kind_name	libraries/lib_c_facts/src/facts.c
+p101_c_fact_parse_line	libraries/lib_c_facts/src/facts.c
+p101_c_fact_status_name	libraries/lib_c_facts/src/facts.c
+p101_c_facts_find_clang_compile_database	libraries/lib_c_facts/src/project.c
