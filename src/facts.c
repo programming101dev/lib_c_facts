@@ -1,6 +1,6 @@
 #include "p101_c_facts/facts.h"
 #include <p101_c/p101_string.h>
-#include <p101_tool_event/event.h>
+#include <p101_record/record.h>
 #include <stdint.h>
 
 enum
@@ -87,7 +87,7 @@ enum p101_c_fact_status p101_c_fact_parse_line(const struct p101_env *env, struc
         goto done;
     }
 
-    if(!p101_tool_event_parse_size_field(fields[FACT_LINE_IDX], &fact->line))
+    if(!p101_record_parse_size(fields[FACT_LINE_IDX], &fact->line))
     {
         status = P101_C_FACT_MALFORMED;
         goto done;
@@ -232,7 +232,7 @@ static size_t split_fact_line(const struct p101_env *env, char *line, char *fiel
     cursor = line;
     while(count < field_count && cursor != NULL)
     {
-        fields[count] = p101_tool_event_split(&cursor);
+        fields[count] = p101_record_split(&cursor);
         count++;
     }
 
@@ -243,7 +243,7 @@ static size_t split_fact_line(const struct p101_env *env, char *line, char *fiel
 
     for(size_t i = 0; i < count; i++)
     {
-        p101_tool_event_unescape_field(fields[i]);
+        p101_record_unescape_field(fields[i]);
     }
 
     return count;

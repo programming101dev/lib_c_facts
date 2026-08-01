@@ -25,6 +25,15 @@ set(LINUX_STANDARD_FLAGS
 set(BSD_STANDARD_FLAGS
 )
 
+# libclang's public C API returns CXCursor, CXType, CXString, CXSourceRange,
+# and CXSourceLocation values by value. That is the required API contract, not
+# an avoidable aggregate-return in p101 code, so scope the exception to the
+# translation unit that adapts libclang.
+set(P101_FILE_FLAG_OPTOUTS
+        "src/analysis.c -Waggregate-return"
+        "src/compile_command.c -Waggregate-return"
+)
+
 # Define library targets
 set(LIBRARY_TARGETS p101_c_facts)
 
@@ -47,7 +56,7 @@ set(p101_c_facts_HEADERS
 # Linked libraries required for this project
 set(p101_c_facts_LINK_LIBRARIES
         p101_error
-        p101_tool_event
+        p101_record
         p101_env
         p101_c
         p101_filesystem
