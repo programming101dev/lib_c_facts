@@ -177,7 +177,7 @@ static int fail_selected_call(const struct p101_env *callback_env, const char *c
      * an acquired libc resource live and obscure the error path under test.
      * fclose/closedir have their own wrapper-level fault fixtures.
      */
-    if(state->target == NULL && (strcmp(call_name, "fclose") == 0 || strcmp(call_name, "closedir") == 0))
+    if(strcmp(call_name, "fclose") == 0 || strcmp(call_name, "closedir") == 0)
     {
         return 0;
     }
