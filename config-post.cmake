@@ -20,8 +20,13 @@ find_path(P101_LIBCLANG_INCLUDE_DIR
             /usr/lib/llvm-20/include
             /usr/lib/llvm-19/include
             /usr/lib/llvm-18/include
-            ${P101_LLVM_INCLUDE_HINTS}
-        REQUIRED)
+            ${P101_LLVM_INCLUDE_HINTS})
+if(NOT P101_LIBCLANG_INCLUDE_DIR)
+    message(FATAL_ERROR
+            "lib_c_facts requires the libclang C API header clang-c/Index.h. "
+            "Install the development package for this platform "
+            "(Ubuntu/Debian: libclang-dev; Fedora: clang-devel), then rerun configuration.")
+endif()
 
 find_library(P101_LIBCLANG_LIBRARY
         NAMES clang libclang
