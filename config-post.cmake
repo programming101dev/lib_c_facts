@@ -37,6 +37,22 @@ find_library(P101_LIBCLANG_LIBRARY
             ${P101_LLVM_LIBRARY_HINTS}
         REQUIRED)
 
+# libclang does not reliably discover its builtin headers from the shared
+# library location on macOS. Record the resource directory selected with the
+# library so embedded parsing sees stdarg.h, stdbool.h, and the other compiler
+# headers without relying on the caller's environment.
+get_filename_component(P101_LIBCLANG_LIBRARY_DIR "${P101_LIBCLANG_LIBRARY}" DIRECTORY)
+file(GLOB P101_LIBCLANG_RESOURCE_CANDIDATES
+        LIST_DIRECTORIES true
+        "${P101_LIBCLANG_LIBRARY_DIR}/clang/*")
+list(SORT P101_LIBCLANG_RESOURCE_CANDIDATES COMPARE NATURAL ORDER DESCENDING)
+foreach(P101_LIBCLANG_RESOURCE_CANDIDATE IN LISTS P101_LIBCLANG_RESOURCE_CANDIDATES)
+    if(EXISTS "${P101_LIBCLANG_RESOURCE_CANDIDATE}/include/stddef.h")
+        add_compile_definitions(P101_LIBCLANG_RESOURCE_DIR="${P101_LIBCLANG_RESOURCE_CANDIDATE}")
+        break()
+    endif()
+endforeach()
+
 if(DEFINED P101_PUBLIC_INCLUDE_DIRS AND NOT P101_PUBLIC_INCLUDE_DIRS STREQUAL "")
     set(P101_LIBCLANG_PUBLIC_INCLUDE_DIRS "${P101_LIBCLANG_INCLUDE_DIR};${P101_PUBLIC_INCLUDE_DIRS}")
 else()

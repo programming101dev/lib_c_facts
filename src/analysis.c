@@ -1080,6 +1080,7 @@ static bool scan_source(const struct p101_env *env, struct p101_error *err, cons
     CXTranslationUnit        translation_unit;
     enum CXErrorCode         parse_status;
     const char              *parse_arguments[ANALYSIS_MAX_ARGUMENTS];
+    char                     resource_argument[ANALYSIS_PATH_SIZE];
     size_t                   parse_argument_count;
     size_t                   argument_index;
     struct scan_context      context;
@@ -1115,6 +1116,19 @@ static bool scan_source(const struct p101_env *env, struct p101_error *err, cons
     {
         parse_arguments[parse_argument_count++] = options->extra_arguments[argument_index];
     }
+#ifdef P101_LIBCLANG_RESOURCE_DIR
+    if(parse_argument_count < ANALYSIS_MAX_ARGUMENTS)
+    {
+        p101_snprintf(env, err, resource_argument, sizeof(resource_argument), "-resource-dir=%s", P101_LIBCLANG_RESOURCE_DIR);
+        if(p101_error_has_error(err))
+        {
+            return false;
+        }
+        parse_arguments[parse_argument_count++] = resource_argument;
+    }
+#else
+    (void)resource_argument;
+#endif
 
     changed_directory = false;
     if(directory != NULL && directory[0] != '\0' && p101_getcwd(env, err, previous_directory, sizeof(previous_directory)) != NULL)
