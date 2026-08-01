@@ -35,6 +35,8 @@ struct analysis_counts
     char   include_name[PATH_SIZE];
     bool   saw_type;
     bool   saw_macro;
+    bool   saw_macro_definition;
+    bool   saw_macro_expansion;
     bool   saw_indirect;
     bool   saw_variadic;
     bool   stop;
@@ -127,7 +129,9 @@ static bool count_record(const struct p101_env *callback_env, struct p101_error 
     }
     else if(record->kind == P101_C_ANALYSIS_MACRO)
     {
-        counts->saw_macro = true;
+        counts->saw_macro            = true;
+        counts->saw_macro_definition = counts->saw_macro_definition || record->is_definition;
+        counts->saw_macro_expansion  = counts->saw_macro_expansion || !record->is_definition;
     }
     if(record->kind == P101_C_ANALYSIS_FUNCTION)
     {
@@ -415,6 +419,8 @@ static void test_directory_analysis_exercises_semantic_records(void)
     TEST_ASSERT_EQUAL_STRING("demo.h", counts.include_name);
     TEST_ASSERT_TRUE(counts.saw_type);
     TEST_ASSERT_TRUE(counts.saw_macro);
+    TEST_ASSERT_TRUE(counts.saw_macro_definition);
+    TEST_ASSERT_TRUE(counts.saw_macro_expansion);
     TEST_ASSERT_TRUE(counts.saw_trace);
     TEST_ASSERT_TRUE(counts.saw_error_discard);
     TEST_ASSERT_TRUE(counts.saw_error_optional);

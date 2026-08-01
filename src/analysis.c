@@ -591,9 +591,10 @@ static void emit_cursor_record(struct scan_context *context, CXCursor cursor, CX
     }
     else if(cursor_kind == CXCursor_MacroDefinition)
     {
-        record.kind = P101_C_ANALYSIS_MACRO;
-        name        = copy_cx_string(context->env, context->err, clang_getCursorSpelling(cursor));
-        record.name = name;
+        record.kind          = P101_C_ANALYSIS_MACRO;
+        record.is_definition = true;
+        name                 = copy_cx_string(context->env, context->err, clang_getCursorSpelling(cursor));
+        record.name          = name;
         if(name == NULL)
         {
             context->stopped = true;
@@ -610,9 +611,16 @@ static void emit_cursor_record(struct scan_context *context, CXCursor cursor, CX
         {
             context->stopped = true;
         }
-        else if(p101_strcmp(context->env, name, "P101_TRACE_SCOPE") == 0)
+        else
         {
-            emit_note(context, path, line, column, record.is_header, "TRACE_USE");
+            record.kind          = P101_C_ANALYSIS_MACRO;
+            record.name          = name;
+            record.is_definition = false;
+            (void)emit_record(context, &record);
+            if(!context->stopped && p101_strcmp(context->env, name, "P101_TRACE_SCOPE") == 0)
+            {
+                emit_note(context, path, line, column, record.is_header, "TRACE_USE");
+            }
         }
     }
     else if(cursor_kind == CXCursor_ParmDecl || cursor_kind == CXCursor_VarDecl || cursor_kind == CXCursor_MemberRefExpr)
