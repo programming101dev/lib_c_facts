@@ -1073,6 +1073,16 @@ static bool command_argument_is_output(const struct p101_env *env, const char *a
     return false;
 }
 
+static bool command_argument_is_sysroot(const struct p101_env *env, const char *argument)
+{
+    P101_TRACE_SCOPE(env);
+    if(p101_strcmp(env, argument, "-isysroot") == 0 || p101_strcmp(env, argument, "--sysroot") == 0 || p101_strncmp(env, argument, "-isysroot=", sizeof("-isysroot=") - 1U) == 0 || p101_strncmp(env, argument, "--sysroot=", sizeof("--sysroot=") - 1U) == 0)
+    {
+        return true;
+    }
+    return false;
+}
+
 static bool scan_source(const struct p101_env *env, struct p101_error *err, const struct p101_c_analysis_options *options, p101_c_analysis_observer observer, void *observer_context, const char *source, const char *directory, const char *const arguments[],
                         size_t argument_count)
 {
@@ -1087,11 +1097,13 @@ static bool scan_source(const struct p101_env *env, struct p101_error *err, cons
     struct inclusion_context inclusion;
     char                     previous_directory[ANALYSIS_PATH_SIZE];
     bool                     changed_directory;
+    bool                     has_sysroot;
     bool                     result;
     unsigned                 translation_unit_options;
 
     P101_TRACE_SCOPE(env);
     parse_argument_count = 0U;
+    has_sysroot          = false;
     for(argument_index = 0U; argument_index < argument_count && parse_argument_count < ANALYSIS_MAX_ARGUMENTS; argument_index++)
     {
         const char *argument;
@@ -1109,6 +1121,10 @@ static bool scan_source(const struct p101_env *env, struct p101_error *err, cons
         if(command_argument_is_output(env, argument))
         {
             continue;
+        }
+        if(command_argument_is_sysroot(env, argument))
+        {
+            has_sysroot = true;
         }
         parse_arguments[parse_argument_count++] = argument;
     }
@@ -1128,6 +1144,15 @@ static bool scan_source(const struct p101_env *env, struct p101_error *err, cons
     }
 #else
     (void)resource_argument;
+#endif
+#ifdef P101_LIBCLANG_SYSROOT
+    if(!has_sysroot && parse_argument_count + 2U <= ANALYSIS_MAX_ARGUMENTS)
+    {
+        parse_arguments[parse_argument_count++] = "-isysroot";
+        parse_arguments[parse_argument_count++] = P101_LIBCLANG_SYSROOT;
+    }
+#else
+    (void)has_sysroot;
 #endif
 
     changed_directory = false;

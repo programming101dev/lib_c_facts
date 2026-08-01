@@ -72,6 +72,28 @@ endif()
 add_compile_definitions(P101_LIBCLANG_RESOURCE_DIR="${P101_LIBCLANG_RESOURCE_DIR}")
 message(STATUS "[libclang] resource directory: ${P101_LIBCLANG_RESOURCE_DIR}")
 
+if(APPLE)
+    if(NOT MAC_SYSROOT)
+        execute_process(
+                COMMAND xcrun --show-sdk-path
+                RESULT_VARIABLE P101_MAC_SYSROOT_RESULT
+                OUTPUT_VARIABLE MAC_SYSROOT
+                OUTPUT_STRIP_TRAILING_WHITESPACE
+                ERROR_QUIET)
+    else()
+        set(P101_MAC_SYSROOT_RESULT 0)
+    endif()
+    if(NOT P101_MAC_SYSROOT_RESULT EQUAL 0
+            OR MAC_SYSROOT STREQUAL ""
+            OR NOT EXISTS "${MAC_SYSROOT}/usr/include/stdio.h")
+        message(FATAL_ERROR
+                "A usable macOS SDK sysroot is required by lib_c_facts; "
+                "xcrun did not supply one containing usr/include/stdio.h")
+    endif()
+    add_compile_definitions(P101_LIBCLANG_SYSROOT="${MAC_SYSROOT}")
+    message(STATUS "[libclang] macOS SDK sysroot: ${MAC_SYSROOT}")
+endif()
+
 if(DEFINED P101_PUBLIC_INCLUDE_DIRS AND NOT P101_PUBLIC_INCLUDE_DIRS STREQUAL "")
     set(P101_LIBCLANG_PUBLIC_INCLUDE_DIRS "${P101_LIBCLANG_INCLUDE_DIR};${P101_PUBLIC_INCLUDE_DIRS}")
 else()
