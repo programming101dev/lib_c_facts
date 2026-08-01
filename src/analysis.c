@@ -71,7 +71,9 @@ static void                    mutation_from_binary(struct scan_context *context
 static void                    mutation_from_call(struct scan_context *context, CXCursor cursor, CXCursor parent, const char *path, size_t line, size_t column);
 static bool                    should_skip_directory(const struct p101_env *env, const char *name);
 static bool                    command_argument_is_output(const struct p101_env *env, const char *argument);
-static bool                    command_argument_takes_value(const struct p101_env *env, const char *argument);
+static bool                    command_argument_takes_ignored_value(const struct p101_env *env, const char *argument);
+static bool                    command_argument_takes_semantic_value(const struct p101_env *env, const char *argument);
+static bool                    command_argument_is_semantic(const struct p101_env *env, const char *argument);
 
 static char *copy_text(const struct p101_env *env, struct p101_error *err, const char *text)
 {
@@ -1073,12 +1075,83 @@ static void emit_mutation_record(struct scan_context *context, CXCursor cursor, 
     }
 }
 
-static bool command_argument_takes_value(const struct p101_env *env, const char *argument)
+static bool command_argument_takes_ignored_value(const struct p101_env *env, const char *argument)
 {
     P101_TRACE_SCOPE(env);
     if(p101_strcmp(env, argument, "-o") == 0 || p101_strcmp(env, argument, "-MF") == 0 || p101_strcmp(env, argument, "-MT") == 0 || p101_strcmp(env, argument, "-MQ") == 0)
     {
         return true;
+    }
+    return false;
+}
+
+static bool command_argument_takes_semantic_value(const struct p101_env *env, const char *argument)
+{
+    P101_TRACE_SCOPE(env);
+    if(p101_strcmp(env, argument, "-D") == 0 || p101_strcmp(env, argument, "-U") == 0 || p101_strcmp(env, argument, "-I") == 0 || p101_strcmp(env, argument, "-F") == 0 || p101_strcmp(env, argument, "-include") == 0 ||
+       p101_strcmp(env, argument, "-imacros") == 0 || p101_strcmp(env, argument, "-isystem") == 0 || p101_strcmp(env, argument, "-iquote") == 0 || p101_strcmp(env, argument, "-idirafter") == 0 || p101_strcmp(env, argument, "-iframework") == 0 ||
+       p101_strcmp(env, argument, "-x") == 0 || p101_strcmp(env, argument, "-target") == 0 || p101_strcmp(env, argument, "--target") == 0 || p101_strcmp(env, argument, "-arch") == 0 || p101_strcmp(env, argument, "-isysroot") == 0 ||
+       p101_strcmp(env, argument, "--sysroot") == 0 || p101_strcmp(env, argument, "--gcc-toolchain") == 0)
+    {
+        return true;
+    }
+    return false;
+}
+
+static bool argument_has_prefix(const struct p101_env *env, const char *argument, const char *prefix)
+{
+    size_t prefix_length;
+
+    P101_TRACE_SCOPE(env);
+    prefix_length = p101_strlen(env, prefix);
+    return p101_strncmp(env, argument, prefix, prefix_length) == 0;
+}
+
+static bool command_argument_is_semantic(const struct p101_env *env, const char *argument)
+{
+    static const char *const exact_arguments[] = {"-ansi",           "-nostdinc",          "-nostdinc++",  "-nobuiltininc", "-pthread",  "-ObjC",         "-ObjC++",       "-fblocks",      "-fno-blocks",
+                                                  "-fms-extensions", "-fno-ms-extensions", "-fdeclspec",   "-fno-declspec", "-fchar8_t", "-fno-char8_t",  "-fshort-wchar", "-fshort-enums", "-funsigned-char",
+                                                  "-fsigned-char",   "-ffreestanding",     "-fno-builtin", "-fopenmp",      "-fmodules", "-fcxx-modules", "-m32",          "-m64"};
+    static const char *const prefixes[]        = {"-D",
+                                                  "-U",
+                                                  "-I",
+                                                  "-F",
+                                                  "-include",
+                                                  "-imacros",
+                                                  "-isystem",
+                                                  "-iquote",
+                                                  "-idirafter",
+                                                  "-iframework",
+                                                  "-iprefix",
+                                                  "-iwithprefix",
+                                                  "-std=",
+                                                  "--std=",
+                                                  "-stdlib=",
+                                                  "--target=",
+                                                  "-isysroot=",
+                                                  "--sysroot=",
+                                                  "--gcc-toolchain=",
+                                                  "-resource-dir=",
+                                                  "-fmodule-map-file=",
+                                                  "-fmodule-file=",
+                                                  "-fmodules-cache-path=",
+                                                  "-fopenmp="};
+    size_t                   index;
+
+    P101_TRACE_SCOPE(env);
+    for(index = 0U; index < sizeof(exact_arguments) / sizeof(exact_arguments[0]); index++)
+    {
+        if(p101_strcmp(env, argument, exact_arguments[index]) == 0)
+        {
+            return true;
+        }
+    }
+    for(index = 0U; index < sizeof(prefixes) / sizeof(prefixes[0]); index++)
+    {
+        if(argument_has_prefix(env, argument, prefixes[index]))
+        {
+            return true;
+        }
     }
     return false;
 }
@@ -1134,12 +1207,29 @@ static bool scan_source(const struct p101_env *env, struct p101_error *err, cons
         {
             continue;
         }
-        if(command_argument_takes_value(env, argument))
+        if(command_argument_takes_ignored_value(env, argument))
         {
             argument_index++;
             continue;
         }
         if(command_argument_is_output(env, argument))
+        {
+            continue;
+        }
+        if(command_argument_takes_semantic_value(env, argument))
+        {
+            if(argument_index + 1U < argument_count && parse_argument_count + 2U <= ANALYSIS_MAX_ARGUMENTS)
+            {
+                if(command_argument_is_sysroot(env, argument))
+                {
+                    has_sysroot = true;
+                }
+                parse_arguments[parse_argument_count++] = argument;
+                parse_arguments[parse_argument_count++] = arguments[++argument_index];
+            }
+            continue;
+        }
+        if(!command_argument_is_semantic(env, argument))
         {
             continue;
         }

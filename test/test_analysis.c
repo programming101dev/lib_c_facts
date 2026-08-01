@@ -200,7 +200,7 @@ static void test_analysis_and_compile_command(void)
     char                           database[PATH_SIZE];
     char                           previous_directory[PATH_SIZE];
     char                           oversized_database[5000];
-    char                           json[2048];
+    char                           json[4096];
     const char                    *paths[1];
     struct p101_c_analysis_options options;
     struct analysis_counts         counts;
@@ -211,6 +211,12 @@ static void test_analysis_and_compile_command(void)
     (void)snprintf(database, sizeof(database), "%s/compile_commands.json", directory);
     TEST_ASSERT_EQUAL_INT(0, mkdir(directory, 0700));
     write_file(source,
+               "#ifndef P101_GCC_DATABASE_DEFINE\n"
+               "#error semantic compile-database define was discarded\n"
+               "#endif\n"
+               "#ifndef P101_GCC_DATABASE_SPLIT_DEFINE\n"
+               "#error split semantic compile-database define was discarded\n"
+               "#endif\n"
                "struct p101_env; struct p101_error;\n"
                "int p101_error_has_error(struct p101_error *err);\n"
                "int p101_first(const struct p101_env *env, struct p101_error *err);\n"
@@ -235,7 +241,11 @@ static void test_analysis_and_compile_command(void)
                "}\n");
     (void)snprintf(json, sizeof(json),
                    "[{\"directory\":\"%s\",\"file\":\"%s\","
-                   "\"arguments\":[\"clang\",\"-std=c17\",\"-c\",\"%s\",\"-o\",\"demo.o\",\"-MFdemo.d\",\"-MT\",\"demo\",\"-MQdemo\"]}]\n",
+                   "\"arguments\":[\"gcc\",\"-std=c17\",\"-pthread\",\"-DP101_GCC_DATABASE_DEFINE=1\","
+                   "\"-D\",\"P101_GCC_DATABASE_SPLIT_DEFINE=1\",\"-x\",\"c\","
+                   "\"-fanalyzer\",\"-fanalyzer-checker=taint\",\"-Wanalyzer-double-free\","
+                   "\"-fsanitize=bounds-strict\",\"-fharden-compares\",\"-femit-class-debug-always\","
+                   "\"-gstatement-frontiers\",\"-c\",\"%s\",\"-o\",\"demo.o\",\"-MFdemo.d\",\"-MT\",\"demo\",\"-MQdemo\"]}]\n",
                    directory, source, source);
     write_file(database, json);
 

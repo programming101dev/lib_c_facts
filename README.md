@@ -52,3 +52,11 @@ The acquisition API reports only translation units admitted by the requested
 paths and compile database. Its error-flow notes use resolved AST calls and
 source locations, but deliberately conservative statement-path reasoning; they
 are evidence for a teaching policy, not a compiler control-flow proof.
+
+Compile databases may originate from GCC or Clang, but parsing is performed by
+libclang. The acquisition boundary therefore admits language mode, definitions,
+include paths, target/sysroot settings, and other syntax-affecting arguments,
+while discarding compiler-specific diagnostics, optimization, instrumentation,
+and code-generation flags. This preserves the source configuration needed for
+the AST without asking libclang to understand another compiler's private flag
+surface.
