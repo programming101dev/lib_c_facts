@@ -66,6 +66,7 @@ static bool                    call_discards_error(const struct p101_env *env, s
 static char                   *cursor_argument_text(const struct p101_env *env, struct p101_error *err, CXCursor cursor, unsigned index, const char *path);
 static bool                    source_near_cursor_contains(const struct p101_env *env, struct p101_error *err, CXCursor cursor, const char *path, const char *needle);
 static void                    emit_note(struct scan_context *context, const char *path, size_t line, size_t column, bool is_header, const char *name);
+static void                    cursor_extent_offsets(CXCursor cursor, size_t *start, size_t *end);
 static void                    mutation_from_binary(struct scan_context *context, CXCursor cursor, const char *path, size_t line, size_t column);
 static void                    mutation_from_call(struct scan_context *context, CXCursor cursor, CXCursor parent, const char *path, size_t line, size_t column);
 static bool                    should_skip_directory(const struct p101_env *env, const char *name);
@@ -392,6 +393,19 @@ static void emit_note(struct scan_context *context, const char *path, size_t lin
     (void)emit_record(context, &record);
 }
 
+static void cursor_extent_offsets(CXCursor cursor, size_t *start, size_t *end)
+{
+    CXSourceRange range;
+    unsigned      start_offset;
+    unsigned      end_offset;
+
+    range = clang_getCursorExtent(cursor);
+    clang_getExpansionLocation(clang_getRangeStart(range), NULL, NULL, NULL, &start_offset);
+    clang_getExpansionLocation(clang_getRangeEnd(range), NULL, NULL, NULL, &end_offset);
+    *start = start_offset;
+    *end   = end_offset;
+}
+
 static void emit_cursor_record(struct scan_context *context, CXCursor cursor, CXCursor parent)
 {
     enum CXCursorKind             cursor_kind;
@@ -402,7 +416,6 @@ static void emit_cursor_record(struct scan_context *context, CXCursor cursor, CX
     char                         *return_type;
     size_t                        line;
     size_t                        column;
-    size_t                        offset;
 
     cursor_kind = clang_getCursorKind(cursor);
     p101_memset(context->env, &record, 0, sizeof(record));
@@ -410,18 +423,18 @@ static void emit_cursor_record(struct scan_context *context, CXCursor cursor, CX
     name        = NULL;
     type        = NULL;
     return_type = NULL;
-    cursor_location(context->env, context->err, cursor, &path, &line, &column, &offset);
+    cursor_location(context->env, context->err, cursor, &path, &line, &column, &record.start_offset);
     if(path == NULL || !path_is_admitted(context->env, context->err, context->options, path))
     {
         p101_free(context->env, path);
         return;
     }
 
-    record.path         = path;
-    record.line         = line;
-    record.column       = column;
-    record.start_offset = offset;
-    record.is_header    = path_has_header_suffix(context->env, path);
+    record.path      = path;
+    record.line      = line;
+    record.column    = column;
+    record.is_header = path_has_header_suffix(context->env, path);
+    cursor_extent_offsets(cursor, &record.start_offset, &record.end_offset);
 
     if(cursor_kind == CXCursor_InclusionDirective)
     {
