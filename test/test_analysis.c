@@ -6,6 +6,7 @@
 #include <p101_error/error.h>
 #include <stdbool.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -47,8 +48,8 @@ struct analysis_counts
 
 struct fault_state
 {
-    size_t call;
-    size_t fail_at;
+    size_t      call;
+    size_t      fail_at;
     const char *target;
 };
 
@@ -107,10 +108,10 @@ static bool count_record(const struct p101_env *callback_env, struct p101_error 
         {
             counts->error_discards++;
         }
-        counts->saw_error_optional = counts->saw_error_optional || strcmp(record->name, "ERROR_OPTIONAL") == 0;
+        counts->saw_error_optional   = counts->saw_error_optional || strcmp(record->name, "ERROR_OPTIONAL") == 0;
         counts->saw_error_propagated = counts->saw_error_propagated || strcmp(record->name, "ERROR_PROPAGATED") == 0;
-        counts->saw_unchecked_chain = counts->saw_unchecked_chain || strcmp(record->name, "ERROR_UNCHECKED_CHAIN") == 0;
-        counts->saw_trace           = counts->saw_trace || strcmp(record->name, "TRACE_USE") == 0;
+        counts->saw_unchecked_chain  = counts->saw_unchecked_chain || strcmp(record->name, "ERROR_UNCHECKED_CHAIN") == 0;
+        counts->saw_trace            = counts->saw_trace || strcmp(record->name, "TRACE_USE") == 0;
     }
     else if(record->kind == P101_C_ANALYSIS_MUTATION)
     {
@@ -132,11 +133,10 @@ static bool count_record(const struct p101_env *callback_env, struct p101_error 
     }
     else if(record->kind == P101_C_ANALYSIS_MACRO)
     {
-        counts->saw_macro            = true;
-        counts->saw_macro_definition = counts->saw_macro_definition || record->is_definition;
-        counts->saw_macro_expansion  = counts->saw_macro_expansion || !record->is_definition;
-        counts->saw_macro_expansion_extent =
-            counts->saw_macro_expansion_extent || (!record->is_definition && record->end_offset > record->start_offset);
+        counts->saw_macro                  = true;
+        counts->saw_macro_definition       = counts->saw_macro_definition || record->is_definition;
+        counts->saw_macro_expansion        = counts->saw_macro_expansion || !record->is_definition;
+        counts->saw_macro_expansion_extent = counts->saw_macro_expansion_extent || (!record->is_definition && record->end_offset > record->start_offset);
     }
     if(record->kind == P101_C_ANALYSIS_FUNCTION)
     {
@@ -151,7 +151,7 @@ static bool check_command(const struct p101_env *callback_env, struct p101_error
 
     (void)callback_env;
     (void)err;
-    called = (bool *)context;
+    called  = (bool *)context;
     *called = command->directory != NULL && command->argument_count >= 2U && command->arguments != NULL;
     return *called;
 }
@@ -239,14 +239,17 @@ static void test_analysis_and_compile_command(void)
                "  COPY_VALUE(value);\n"
                "  return 1;\n"
                "}\n");
-    (void)snprintf(json, sizeof(json),
+    (void)snprintf(json,
+                   sizeof(json),
                    "[{\"directory\":\"%s\",\"file\":\"%s\","
                    "\"arguments\":[\"gcc\",\"-std=c17\",\"-pthread\",\"-DP101_GCC_DATABASE_DEFINE=1\","
                    "\"-D\",\"P101_GCC_DATABASE_SPLIT_DEFINE=1\",\"-x\",\"c\","
                    "\"-fanalyzer\",\"-fanalyzer-checker=taint\",\"-Wanalyzer-double-free\","
                    "\"-fsanitize=bounds-strict\",\"-fharden-compares\",\"-femit-class-debug-always\","
                    "\"-gstatement-frontiers\",\"-c\",\"%s\",\"-o\",\"demo.o\",\"-MFdemo.d\",\"-MT\",\"demo\",\"-MQdemo\"]}]\n",
-                   directory, source, source);
+                   directory,
+                   source,
+                   source);
     write_file(database, json);
 
     memset(&options, 0, sizeof(options));
@@ -300,7 +303,7 @@ static void test_analysis_and_compile_command(void)
 
     memset(oversized_database, 'x', sizeof(oversized_database) - 1U);
     oversized_database[sizeof(oversized_database) - 1U] = '\0';
-    options.compile_database = oversized_database;
+    options.compile_database                            = oversized_database;
     TEST_ASSERT_FALSE(p101_c_analysis_scan(env, error, &options, count_record, &counts));
     TEST_ASSERT_TRUE(p101_error_has_error(error));
     p101_error_reset(error);
@@ -316,9 +319,9 @@ static void test_analysis_and_compile_command(void)
 
     for(size_t fail_at = 1U; fail_at <= 200U; fail_at++)
     {
-        struct p101_error *fault_error;
-        struct p101_env   *fault_env;
-        struct fault_state state;
+        struct p101_error     *fault_error;
+        struct p101_env       *fault_env;
+        struct fault_state     state;
         struct analysis_counts fault_counts;
 
         fault_error   = p101_error_create(false);
@@ -341,6 +344,53 @@ static void test_analysis_and_compile_command(void)
     TEST_ASSERT_EQUAL_STRING("error-predicate", p101_c_mutation_kind_name(P101_C_MUTATION_ERROR_PREDICATE));
     TEST_ASSERT_EQUAL_STRING("skip-cleanup", p101_c_mutation_kind_name(P101_C_MUTATION_SKIP_CLEANUP));
     TEST_ASSERT_EQUAL_STRING("unknown", p101_c_mutation_kind_name((enum p101_c_mutation_kind)99));
+
+    TEST_ASSERT_EQUAL_INT(0, unlink(database));
+    TEST_ASSERT_EQUAL_INT(0, unlink(source));
+    TEST_ASSERT_EQUAL_INT(0, rmdir(directory));
+}
+
+static void test_wrapper_conformance_smoke(void)
+{
+    char                           directory[PATH_SIZE];
+    char                           source[PATH_SIZE];
+    char                           database[PATH_SIZE];
+    char                           json[1024];
+    const char                    *paths[1];
+    struct p101_c_analysis_options options;
+    struct analysis_counts         counts;
+    bool                           command_called;
+
+    (void)snprintf(directory, sizeof(directory), "/tmp/p101-c-analysis-conformance-%ld", (long)getpid());
+    (void)snprintf(source, sizeof(source), "%s/demo.c", directory);
+    (void)snprintf(database, sizeof(database), "%s/compile_commands.json", directory);
+    TEST_ASSERT_EQUAL_INT(0, mkdir(directory, 0700));
+    write_file(source, "static int helper(void) { return 1; }\nint demo(void) { return helper(); }\n");
+    (void)snprintf(json,
+                   sizeof(json),
+                   "[{\"directory\":\"%s\",\"file\":\"%s\","
+                   "\"arguments\":[\"clang\",\"-std=c17\",\"-c\",\"%s\"]}]\n",
+                   directory,
+                   source,
+                   source);
+    write_file(database, json);
+
+    memset(&options, 0, sizeof(options));
+    memset(&counts, 0, sizeof(counts));
+    paths[0]                 = source;
+    options.compile_database = database;
+    options.paths            = paths;
+    options.path_count       = 1U;
+    TEST_ASSERT_TRUE(p101_c_analysis_scan(env, error, &options, count_record, &counts));
+    TEST_ASSERT_FALSE(p101_error_has_error(error));
+    TEST_ASSERT_GREATER_THAN_UINT(0U, counts.functions);
+    TEST_ASSERT_GREATER_THAN_UINT(0U, counts.calls);
+
+    command_called = false;
+    TEST_ASSERT_TRUE(p101_c_facts_with_compile_command(env, error, database, source, check_command, &command_called));
+    TEST_ASSERT_TRUE(command_called);
+    TEST_ASSERT_EQUAL_STRING("FUNCTION", p101_c_analysis_kind_name(P101_C_ANALYSIS_FUNCTION));
+    TEST_ASSERT_EQUAL_STRING("skip-cleanup", p101_c_mutation_kind_name(P101_C_MUTATION_SKIP_CLEANUP));
 
     TEST_ASSERT_EQUAL_INT(0, unlink(database));
     TEST_ASSERT_EQUAL_INT(0, unlink(source));
@@ -435,13 +485,13 @@ static void test_directory_analysis_exercises_semantic_records(void)
 
     memset(&options, 0, sizeof(options));
     memset(&counts, 0, sizeof(counts));
-    paths[0]                            = directory;
-    extra_arguments[0]                 = "-DTEST_EXTRA_ARGUMENT=1";
-    options.paths                       = paths;
-    options.path_count                  = 1U;
-    options.extra_arguments             = extra_arguments;
-    options.extra_argument_count        = 1U;
-    options.detailed_preprocessing      = true;
+    paths[0]                                     = directory;
+    extra_arguments[0]                           = "-DTEST_EXTRA_ARGUMENT=1";
+    options.paths                                = paths;
+    options.path_count                           = 1U;
+    options.extra_arguments                      = extra_arguments;
+    options.extra_argument_count                 = 1U;
+    options.detailed_preprocessing               = true;
     options.include_headers_as_translation_units = true;
     TEST_ASSERT_TRUE(p101_c_analysis_scan(env, error, &options, count_record, &counts));
     TEST_ASSERT_TRUE(counts.saw_include);
@@ -471,7 +521,7 @@ static void test_directory_analysis_exercises_semantic_records(void)
     TEST_ASSERT_FALSE(p101_error_has_error(error));
 
     memset(&counts, 0, sizeof(counts));
-    paths[0] = source;
+    paths[0]                                     = source;
     options.include_headers_as_translation_units = false;
     TEST_ASSERT_TRUE(p101_c_analysis_scan(env, error, &options, count_record, &counts));
     TEST_ASSERT_GREATER_THAN_UINT(0U, counts.functions);
@@ -499,7 +549,7 @@ static void test_analysis_failures_and_faults(void)
     struct p101_c_analysis_options options;
     struct analysis_counts         counts;
     const char                    *invalid_arguments[2];
-    static const char *const        fault_targets[] = {"malloc", "fopen", "fseek", "fread", "fclose", "stat", "opendir", "readdir", "closedir", "getcwd", "chdir", "snprintf"};
+    static const char *const       fault_targets[] = {"malloc", "fopen", "fseek", "fread", "fclose", "stat", "opendir", "readdir", "closedir", "getcwd", "chdir", "snprintf"};
     size_t                         fail_at;
     size_t                         target_index;
 
@@ -510,9 +560,9 @@ static void test_analysis_failures_and_faults(void)
     write_file(source, "int demo(void) { return 0; }\n");
 
     memset(&options, 0, sizeof(options));
-    paths[0]                = directory;
-    options.paths           = paths;
-    options.path_count      = 1U;
+    paths[0]                 = directory;
+    options.paths            = paths;
+    options.path_count       = 1U;
     options.compile_database = missing_database;
     TEST_ASSERT_FALSE(p101_c_analysis_scan(env, error, &options, count_record, NULL));
     TEST_ASSERT_TRUE(p101_error_has_error(error));
@@ -528,16 +578,16 @@ static void test_analysis_failures_and_faults(void)
     options.compile_database = NULL;
     for(fail_at = 1U; fail_at <= 80U; fail_at++)
     {
-        struct p101_error *fault_error;
-        struct p101_env   *fault_env;
-        struct fault_state state;
+        struct p101_error     *fault_error;
+        struct p101_env       *fault_env;
+        struct fault_state     state;
         struct analysis_counts counts;
 
-        fault_error = p101_error_create(false);
-        fault_env   = p101_env_create(fault_error, NULL);
-        state.call  = 0U;
+        fault_error   = p101_error_create(false);
+        fault_env     = p101_env_create(fault_error, NULL);
+        state.call    = 0U;
         state.fail_at = fail_at;
-        state.target = NULL;
+        state.target  = NULL;
         memset(&counts, 0, sizeof(counts));
         p101_env_set_fault_injector(fault_env, fail_selected_call, &state);
         (void)p101_c_analysis_scan(fault_env, fault_error, &options, count_record, &counts);
@@ -549,9 +599,9 @@ static void test_analysis_failures_and_faults(void)
     {
         for(fail_at = 1U; fail_at <= 8U; fail_at++)
         {
-            struct p101_error *fault_error;
-            struct p101_env   *fault_env;
-            struct fault_state state;
+            struct p101_error     *fault_error;
+            struct p101_env       *fault_env;
+            struct fault_state     state;
             struct analysis_counts fault_counts;
 
             fault_error   = p101_error_create(false);
@@ -568,17 +618,17 @@ static void test_analysis_failures_and_faults(void)
     }
 
     memset(&counts, 0, sizeof(counts));
-    paths[0]                         = source;
-    invalid_arguments[0]             = "-x";
-    invalid_arguments[1]             = "not-a-language";
-    options.extra_arguments          = invalid_arguments;
-    options.extra_argument_count     = 2U;
+    paths[0]                     = source;
+    invalid_arguments[0]         = "-x";
+    invalid_arguments[1]         = "not-a-language";
+    options.extra_arguments      = invalid_arguments;
+    options.extra_argument_count = 2U;
     TEST_ASSERT_FALSE(p101_c_analysis_scan(env, error, &options, count_record, &counts));
     TEST_ASSERT_FALSE(p101_error_has_error(error));
     options.keep_going = true;
     TEST_ASSERT_TRUE(p101_c_analysis_scan(env, error, &options, count_record, &counts));
-    options.keep_going          = false;
-    options.extra_arguments     = NULL;
+    options.keep_going           = false;
+    options.extra_arguments      = NULL;
     options.extra_argument_count = 0U;
 
     memset(&counts, 0, sizeof(counts));
@@ -634,6 +684,17 @@ static void test_clang_error_diagnostic_is_observable(void)
 int main(void)
 {
     UNITY_BEGIN();
+    if(getenv("P101_WRAPPER_CONFORMANCE") != NULL)
+    {
+        /*
+         * The complete repository test gate runs every case. Wrapper
+         * conformance needs representative public-API evidence, not millions
+         * of repeated parser events from the semantic stress fixtures.
+         */
+        RUN_TEST(test_wrapper_conformance_smoke);
+        RUN_TEST(test_invalid_analysis_arguments);
+        return UNITY_END();
+    }
     RUN_TEST(test_analysis_and_compile_command);
     RUN_TEST(test_directory_analysis_exercises_semantic_records);
     RUN_TEST(test_analysis_failures_and_faults);
