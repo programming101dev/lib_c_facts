@@ -335,7 +335,11 @@ static void test_analysis_and_compile_command(void)
 
     TEST_ASSERT_EQUAL_STRING("NOTE", p101_c_analysis_kind_name(P101_C_ANALYSIS_NOTE));
     TEST_ASSERT_EQUAL_STRING("UNKNOWN", p101_c_analysis_kind_name((enum p101_c_analysis_kind)99));
+    TEST_ASSERT_EQUAL_STRING("comparison-boundary", p101_c_mutation_kind_name(P101_C_MUTATION_COMPARISON_BOUNDARY));
+    TEST_ASSERT_EQUAL_STRING("logical-connective", p101_c_mutation_kind_name(P101_C_MUTATION_LOGICAL_CONNECTIVE));
+    TEST_ASSERT_EQUAL_STRING("arithmetic-operator", p101_c_mutation_kind_name(P101_C_MUTATION_ARITHMETIC_OPERATOR));
     TEST_ASSERT_EQUAL_STRING("error-predicate", p101_c_mutation_kind_name(P101_C_MUTATION_ERROR_PREDICATE));
+    TEST_ASSERT_EQUAL_STRING("skip-cleanup", p101_c_mutation_kind_name(P101_C_MUTATION_SKIP_CLEANUP));
     TEST_ASSERT_EQUAL_STRING("unknown", p101_c_mutation_kind_name((enum p101_c_mutation_kind)99));
 
     TEST_ASSERT_EQUAL_INT(0, unlink(database));

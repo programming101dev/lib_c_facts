@@ -699,7 +699,7 @@ static enum CXChildVisitResult visit_cursor(CXCursor cursor, CXCursor parent, CX
             context->conditional_has_return = true;
         }
     }
-    if(kind == CXCursor_IfStmt || kind == CXCursor_SwitchStmt || kind == CXCursor_ConditionalOperator)
+    if(kind == CXCursor_IfStmt || kind == CXCursor_SwitchStmt || kind == CXCursor_ConditionalOperator || kind == CXCursor_WhileStmt || kind == CXCursor_DoStmt || kind == CXCursor_ForStmt || kind == CXCursor_CXXForRangeStmt)
     {
         conditional_scope = true;
         context->conditional_depth++;
@@ -847,7 +847,16 @@ static char *source_range_text(const struct p101_env *env, struct p101_error *er
     size_t read_count;
 
     P101_TRACE_SCOPE(env);
-    if(end < start || end - start > SIZE_MAX - 1U)
+    /*
+     * libclang can report an inverted spelling range for calls synthesized
+     * from macro expansions. Such a cursor has no safely editable source
+     * range, so it is not a mutation candidate; it is not an analysis error.
+     */
+    if(end < start)
+    {
+        return NULL;
+    }
+    if(end - start > SIZE_MAX - 1U)
     {
         P101_ERROR_RAISE_CHECK(err);
         return NULL;
@@ -891,11 +900,25 @@ static char *source_range_text(const struct p101_env *env, struct p101_error *er
 
 static void mutation_from_binary(struct scan_context *context, CXCursor cursor, const char *path, size_t line, size_t column)
 {
-    static const char *const originals[]    = {"==", "!=", "<", "<=", ">", ">="};
-    static const char *const replacements[] = {"!=", "==", "<=", "<", ">=", ">"};
-    CXToken                 *tokens;
-    unsigned                 token_count;
-    unsigned                 index;
+    static const char *const originals[]    = {"==", "!=", "<", "<=", ">", ">=", "&&", "||", "+", "-"};
+    static const char *const replacements[] = {"!=", "==", "<=", "<", ">=", ">", "||", "&&", "-", "+"};
+
+    static const enum p101_c_mutation_kind kinds[] = {
+        P101_C_MUTATION_COMPARISON_BOUNDARY,
+        P101_C_MUTATION_COMPARISON_BOUNDARY,
+        P101_C_MUTATION_COMPARISON_BOUNDARY,
+        P101_C_MUTATION_COMPARISON_BOUNDARY,
+        P101_C_MUTATION_COMPARISON_BOUNDARY,
+        P101_C_MUTATION_COMPARISON_BOUNDARY,
+        P101_C_MUTATION_LOGICAL_CONNECTIVE,
+        P101_C_MUTATION_LOGICAL_CONNECTIVE,
+        P101_C_MUTATION_ARITHMETIC_OPERATOR,
+        P101_C_MUTATION_ARITHMETIC_OPERATOR,
+    };
+
+    CXToken *tokens;
+    unsigned token_count;
+    unsigned index;
 
     tokens      = NULL;
     token_count = 0U;
@@ -934,7 +957,7 @@ static void mutation_from_binary(struct scan_context *context, CXCursor cursor, 
                 record.end_offset   = end_offset;
                 record.name         = originals[replacement_index];
                 record.replacement  = replacements[replacement_index];
-                record.mutation     = P101_C_MUTATION_COMPARISON_BOUNDARY;
+                record.mutation     = kinds[replacement_index];
                 (void)emit_record(context, &record);
                 break;
             }
@@ -944,11 +967,48 @@ static void mutation_from_binary(struct scan_context *context, CXCursor cursor, 
     clang_disposeTokens(context->translation_unit, tokens, token_count);
 }
 
+static bool mutation_cleanup_call(const struct p101_env *env, const char *name)
+{
+    static const char *const exact_names[] = {
+        "p101_free",
+        "p101_munmap",
+        "p101_pthread_join",
+        "p101_pthread_detach",
+        "p101_error_reset",
+    };
+    static const char *const fragments[] = {
+        "close",
+        "destroy",
+        "release",
+        "unlock",
+    };
+    size_t index;
+
+    if(p101_strncmp(env, name, "p101_", sizeof("p101_") - 1U) != 0)
+    {
+        return false;
+    }
+    for(index = 0U; index < sizeof(exact_names) / sizeof(exact_names[0]); index++)
+    {
+        if(p101_strcmp(env, name, exact_names[index]) == 0)
+        {
+            return true;
+        }
+    }
+    for(index = 0U; index < sizeof(fragments) / sizeof(fragments[0]); index++)
+    {
+        if(p101_strstr(env, name, fragments[index]) != NULL)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
 static void mutation_from_call(struct scan_context *context, CXCursor cursor, CXCursor parent, const char *path, size_t line, size_t column)
 {
     static const char *const predicate_names[]        = {"p101_error_has_error", "p101_error_has_no_error"};
     static const char *const predicate_replacements[] = {"p101_error_has_no_error", "p101_error_has_error"};
-    static const char *const cleanup_names[]          = {"p101_close", "p101_fclose", "p101_free"};
     CXCursor                 referenced;
     char                    *name;
     size_t                   index;
@@ -1019,41 +1079,37 @@ static void mutation_from_call(struct scan_context *context, CXCursor cursor, CX
 
     if(clang_getCursorKind(parent) == CXCursor_CompoundStmt)
     {
-        for(index = 0U; index < sizeof(cleanup_names) / sizeof(cleanup_names[0]); index++)
+        if(mutation_cleanup_call(context->env, name))
         {
-            if(p101_strcmp(context->env, name, cleanup_names[index]) == 0)
-            {
-                struct p101_c_analysis_record record;
-                CXSourceRange                 range;
-                CXFile                        file;
-                unsigned                      start_line;
-                unsigned                      start_column;
-                unsigned                      start_offset;
-                unsigned                      end_line;
-                unsigned                      end_column;
-                unsigned                      end_offset;
-                char                         *original;
+            struct p101_c_analysis_record record;
+            CXSourceRange                 range;
+            CXFile                        file;
+            unsigned                      start_line;
+            unsigned                      start_column;
+            unsigned                      start_offset;
+            unsigned                      end_line;
+            unsigned                      end_column;
+            unsigned                      end_offset;
+            char                         *original;
 
-                range = clang_getCursorExtent(cursor);
-                clang_getSpellingLocation(clang_getRangeStart(range), &file, &start_line, &start_column, &start_offset);
-                clang_getSpellingLocation(clang_getRangeEnd(range), &file, &end_line, &end_column, &end_offset);
-                original = source_range_text(context->env, context->err, path, start_offset, end_offset);
-                if(original != NULL)
-                {
-                    p101_memset(context->env, &record, 0, sizeof(record));
-                    record.kind         = P101_C_ANALYSIS_MUTATION;
-                    record.path         = path;
-                    record.line         = line;
-                    record.column       = column;
-                    record.start_offset = start_offset;
-                    record.end_offset   = end_offset;
-                    record.name         = original;
-                    record.replacement  = "(void)0";
-                    record.mutation     = P101_C_MUTATION_SKIP_CLEANUP;
-                    (void)emit_record(context, &record);
-                    p101_free(context->env, original);
-                }
-                break;
+            range = clang_getCursorExtent(cursor);
+            clang_getSpellingLocation(clang_getRangeStart(range), &file, &start_line, &start_column, &start_offset);
+            clang_getSpellingLocation(clang_getRangeEnd(range), &file, &end_line, &end_column, &end_offset);
+            original = source_range_text(context->env, context->err, path, start_offset, end_offset);
+            if(original != NULL)
+            {
+                p101_memset(context->env, &record, 0, sizeof(record));
+                record.kind         = P101_C_ANALYSIS_MUTATION;
+                record.path         = path;
+                record.line         = line;
+                record.column       = column;
+                record.start_offset = start_offset;
+                record.end_offset   = end_offset;
+                record.name         = original;
+                record.replacement  = "(void)0";
+                record.mutation     = P101_C_MUTATION_SKIP_CLEANUP;
+                (void)emit_record(context, &record);
+                p101_free(context->env, original);
             }
         }
     }
@@ -1653,7 +1709,7 @@ const char *p101_c_analysis_kind_name(enum p101_c_analysis_kind kind)
 
 const char *p101_c_mutation_kind_name(enum p101_c_mutation_kind kind)
 {
-    static const char *const names[] = {"none", "comparison-boundary", "error-predicate", "skip-cleanup"};
+    static const char *const names[] = {"none", "comparison-boundary", "logical-connective", "arithmetic-operator", "error-predicate", "skip-cleanup"};
 
     if(kind < P101_C_MUTATION_NONE || kind > P101_C_MUTATION_SKIP_CLEANUP)
     {
