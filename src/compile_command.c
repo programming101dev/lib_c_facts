@@ -3,6 +3,7 @@
 #include <p101_c/p101_stdio.h>
 #include <p101_c/p101_stdlib.h>
 #include <p101_c/p101_string.h>
+#include <p101_env/wrapper.h>
 #include <p101_filesystem/filesystem.h>
 
 enum
@@ -42,6 +43,7 @@ static char *copy_cx_string(const struct p101_env *env, struct p101_error *err, 
 
 bool p101_c_facts_with_compile_command(const struct p101_env *env, struct p101_error *err, const char *compile_database, const char *source_path, p101_c_compile_command_observer observer, void *context)
 {
+    bool                        p101_single_result_;
     char                        database_directory[COMPILE_COMMAND_PATH_SIZE];
     const char                 *separator;
     char                        canonical_source[COMPILE_COMMAND_PATH_SIZE];
@@ -54,19 +56,23 @@ bool p101_c_facts_with_compile_command(const struct p101_env *env, struct p101_e
     bool                        result;
 
     P101_TRACE_SCOPE(env);
+    P101_WRAPPER_FAULT_SCOPE_RETURN(env, err, result, false);
     if(compile_database == NULL || source_path == NULL || observer == NULL || p101_realpath(env, err, source_path, canonical_source) == NULL)
     {
-        return false;
+        p101_single_result_ = false;
+        goto p101_single_exit_;
     }
     if(p101_strlen(env, compile_database) >= sizeof(database_directory))
     {
         P101_ERROR_RAISE_USER(err, "The compilation-database path is too long.", 1);
-        return false;
+        p101_single_result_ = false;
+        goto p101_single_exit_;
     }
     p101_snprintf(env, err, database_directory, sizeof(database_directory), "%s", compile_database);
     if(p101_error_has_error(err))
     {
-        return false;
+        p101_single_result_ = false;
+        goto p101_single_exit_;
     }
     separator = p101_strrchr(env, database_directory, '/');
     if(separator == NULL)
@@ -82,7 +88,8 @@ bool p101_c_facts_with_compile_command(const struct p101_env *env, struct p101_e
     if(database_error != CXCompilationDatabase_NoError)
     {
         P101_ERROR_RAISE_USER(err, "Unable to load the Clang compilation database.", 1);
-        return false;
+        p101_single_result_ = false;
+        goto p101_single_exit_;
     }
     commands      = clang_CompilationDatabase_getAllCompileCommands(database);
     command_count = clang_CompileCommands_getSize(commands);
@@ -137,9 +144,15 @@ bool p101_c_facts_with_compile_command(const struct p101_env *env, struct p101_e
     {
         P101_ERROR_RAISE_USER(err, "The compilation database has no command for the mutation candidate.", 1);
     }
+    P101_WRAPPER_SCOPE_DONE();
     if(result && p101_error_has_no_error(err))
     {
-        return true;
+        p101_single_result_ = true;
+        goto p101_single_exit_;
     }
-    return false;
+    p101_single_result_ = false;
+    goto p101_single_exit_;
+
+p101_single_exit_:
+    return p101_single_result_;
 }

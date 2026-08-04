@@ -1,6 +1,7 @@
 #include "p101_c_facts/project.h"
 #include <p101_c/p101_stdio.h>
 #include <p101_c/p101_string.h>
+#include <p101_env/wrapper.h>
 #include <p101_filesystem/filesystem.h>
 #include <unistd.h>
 
@@ -65,6 +66,7 @@ bool p101_c_facts_find_clang_compile_database(const struct p101_env *env, struct
     bool        found;
 
     P101_TRACE(env);
+    P101_WRAPPER_FAULT_RETURN(env, err, found, false);
     found = false;
     if(project_directory == NULL || path == NULL || path_size == 0U)
     {
@@ -133,6 +135,6 @@ done:
     {
         path[0] = '\0';
     }
-    P101_TRACE_EXIT(env);
+    P101_WRAPPER_DONE(env);
     return found;
 }

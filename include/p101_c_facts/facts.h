@@ -8,7 +8,7 @@
 
 #define P101_C_FACT_TAG "P101FACT"
 #define P101_C_FACT_PREFIX "P101FACT\t"
-#define P101_C_FACT_VERSION "2"
+#define P101_C_FACT_VERSION "4"
 
 #ifdef __cplusplus
 extern "C"
@@ -31,6 +31,8 @@ extern "C"
         P101_C_FACT_KIND_FUNCTION,
         P101_C_FACT_KIND_CALL,
         P101_C_FACT_KIND_TYPE,
+        P101_C_FACT_KIND_ENUM,
+        P101_C_FACT_KIND_ENUMERATOR,
         P101_C_FACT_KIND_MACRO,
         P101_C_FACT_KIND_NOTE
     };
@@ -42,7 +44,9 @@ extern "C"
         char                 *module;
         bool                  is_header;
         size_t                line;
+        size_t                column;
         char                 *value;
+        char                 *caller;
         bool                  flag1;
         bool                  flag2;
     };

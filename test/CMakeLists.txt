@@ -111,3 +111,4 @@ endfunction()
 
 p101_add_test(test_facts test_facts.c)
 p101_add_test(test_analysis test_analysis.c)
+p101_add_test(test_fault_wrappers test_fault_wrappers.c)

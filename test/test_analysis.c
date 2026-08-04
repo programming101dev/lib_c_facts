@@ -30,6 +30,10 @@ struct analysis_counts
     bool   saw_error_optional;
     bool   saw_error_propagated;
     bool   saw_unchecked_chain;
+    bool   saw_function_return;
+    bool   saw_function_return_caller;
+    bool   saw_enum;
+    bool   saw_enumerator;
     bool   saw_trace;
     bool   saw_include;
     bool   saw_local_include;
@@ -111,11 +115,22 @@ static bool count_record(const struct p101_env *callback_env, struct p101_error 
         counts->saw_error_optional   = counts->saw_error_optional || strcmp(record->name, "ERROR_OPTIONAL") == 0;
         counts->saw_error_propagated = counts->saw_error_propagated || strcmp(record->name, "ERROR_PROPAGATED") == 0;
         counts->saw_unchecked_chain  = counts->saw_unchecked_chain || strcmp(record->name, "ERROR_UNCHECKED_CHAIN") == 0;
+        counts->saw_function_return  = counts->saw_function_return || strcmp(record->name, "FUNCTION_RETURN") == 0;
+        counts->saw_function_return_caller =
+            counts->saw_function_return_caller || (strcmp(record->name, "FUNCTION_RETURN") == 0 && record->caller != NULL && record->caller[0] != '\0');
         counts->saw_trace            = counts->saw_trace || strcmp(record->name, "TRACE_USE") == 0;
     }
     else if(record->kind == P101_C_ANALYSIS_MUTATION)
     {
         counts->mutations++;
+    }
+    else if(record->kind == P101_C_ANALYSIS_ENUM)
+    {
+        counts->saw_enum = counts->saw_enum || strcmp(record->name, "sample_result") == 0;
+    }
+    else if(record->kind == P101_C_ANALYSIS_ENUMERATOR)
+    {
+        counts->saw_enumerator = counts->saw_enumerator || (strcmp(record->name, "SAMPLE_RESULT_OK") == 0 && strcmp(record->type, "sample_result") == 0);
     }
     else if(record->kind == P101_C_ANALYSIS_DIAGNOSTIC)
     {
@@ -218,6 +233,7 @@ static void test_analysis_and_compile_command(void)
                "#error split semantic compile-database define was discarded\n"
                "#endif\n"
                "struct p101_env; struct p101_error;\n"
+               "typedef enum { SAMPLE_RESULT_OK, SAMPLE_RESULT_REFUSED } sample_result;\n"
                "int p101_error_has_error(struct p101_error *err);\n"
                "int p101_first(const struct p101_env *env, struct p101_error *err);\n"
                "int p101_second(const struct p101_env *env, struct p101_error *err);\n"
@@ -263,6 +279,10 @@ static void test_analysis_and_compile_command(void)
     TEST_ASSERT_FALSE(p101_error_has_error(error));
     TEST_ASSERT_GREATER_THAN_UINT(0U, counts.functions);
     TEST_ASSERT_GREATER_THAN_UINT(0U, counts.calls);
+    TEST_ASSERT_TRUE(counts.saw_function_return);
+    TEST_ASSERT_TRUE(counts.saw_function_return_caller);
+    TEST_ASSERT_TRUE(counts.saw_enum);
+    TEST_ASSERT_TRUE(counts.saw_enumerator);
     TEST_ASSERT_GREATER_THAN_UINT(0U, counts.notes);
     TEST_ASSERT_GREATER_THAN_UINT(0U, counts.mutations);
     TEST_ASSERT_TRUE(counts.saw_error_contract);
@@ -337,6 +357,8 @@ static void test_analysis_and_compile_command(void)
     }
 
     TEST_ASSERT_EQUAL_STRING("NOTE", p101_c_analysis_kind_name(P101_C_ANALYSIS_NOTE));
+    TEST_ASSERT_EQUAL_STRING("ENUM", p101_c_analysis_kind_name(P101_C_ANALYSIS_ENUM));
+    TEST_ASSERT_EQUAL_STRING("ENUMERATOR", p101_c_analysis_kind_name(P101_C_ANALYSIS_ENUMERATOR));
     TEST_ASSERT_EQUAL_STRING("UNKNOWN", p101_c_analysis_kind_name((enum p101_c_analysis_kind)99));
     TEST_ASSERT_EQUAL_STRING("comparison-boundary", p101_c_mutation_kind_name(P101_C_MUTATION_COMPARISON_BOUNDARY));
     TEST_ASSERT_EQUAL_STRING("logical-connective", p101_c_mutation_kind_name(P101_C_MUTATION_LOGICAL_CONNECTIVE));

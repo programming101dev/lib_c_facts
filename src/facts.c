@@ -1,5 +1,6 @@
 #include "p101_c_facts/facts.h"
 #include <p101_c/p101_string.h>
+#include <p101_env/wrapper.h>
 #include <p101_record/record.h>
 #include <stdint.h>
 
@@ -17,10 +18,15 @@ enum
     FACT_VALUE_IDX        = 7,
     FACT_FLAG1_IDX        = 8,
     FACT_FLAG2_IDX        = 9,
+    FACT_CALLER_IDX       = 10,
+    FACT_NOTE_CALLER_IDX  = 8,
+    FACT_NOTE_COLUMN_IDX  = 9,
+    FACT_ENUM_TYPE_IDX    = 8,
     FACT_VALUE_FIELDS     = 8,
     FACT_INCLUDE_FIELDS   = 9,
     FACT_FUNCTION_FIELDS  = 10,
-    FACT_CALL_FIELDS      = 10
+    FACT_CALL_FIELDS      = 11,
+    FACT_NOTE_FIELDS      = 10
 };
 
 static size_t                split_fact_line(const struct p101_env *env, char *line, char *fields[], size_t field_count);
@@ -37,7 +43,7 @@ enum p101_c_fact_status p101_c_fact_parse_line(const struct p101_env *env, struc
     char                   *newline;
 
     P101_TRACE_SCOPE(env);
-    (void)err;
+    P101_WRAPPER_FAULT_SCOPE_RETURN(env, err, status, P101_C_FACT_MALFORMED);
     status = P101_C_FACT_MALFORMED;
 
     if(line == NULL || fact == NULL)
@@ -105,7 +111,7 @@ enum p101_c_fact_status p101_c_fact_parse_line(const struct p101_env *env, struc
     {
         fact->value = fields[FACT_VALUE_IDX];
     }
-    if(field_count > FACT_FLAG1_IDX)
+    if((fact->kind == P101_C_FACT_KIND_INCLUDE || fact->kind == P101_C_FACT_KIND_FUNCTION || fact->kind == P101_C_FACT_KIND_CALL) && field_count > FACT_FLAG1_IDX)
     {
         if(!parse_fact_bool(env, fields[FACT_FLAG1_IDX], &fact->flag1))
         {
@@ -113,9 +119,26 @@ enum p101_c_fact_status p101_c_fact_parse_line(const struct p101_env *env, struc
             goto done;
         }
     }
-    if(field_count > FACT_FLAG2_IDX)
+    if((fact->kind == P101_C_FACT_KIND_FUNCTION || fact->kind == P101_C_FACT_KIND_CALL) && field_count > FACT_FLAG2_IDX)
     {
         if(!parse_fact_bool(env, fields[FACT_FLAG2_IDX], &fact->flag2))
+        {
+            status = P101_C_FACT_MALFORMED;
+            goto done;
+        }
+    }
+    if(fact->kind == P101_C_FACT_KIND_CALL)
+    {
+        fact->caller = fields[FACT_CALLER_IDX];
+    }
+    else if(fact->kind == P101_C_FACT_KIND_ENUMERATOR)
+    {
+        fact->caller = fields[FACT_ENUM_TYPE_IDX];
+    }
+    else if(fact->kind == P101_C_FACT_KIND_NOTE)
+    {
+        fact->caller = fields[FACT_NOTE_CALLER_IDX];
+        if(!p101_record_parse_size(fields[FACT_NOTE_COLUMN_IDX], &fact->column))
         {
             status = P101_C_FACT_MALFORMED;
             goto done;
@@ -125,6 +148,7 @@ enum p101_c_fact_status p101_c_fact_parse_line(const struct p101_env *env, struc
     status = P101_C_FACT_OK;
 
 done:
+    P101_WRAPPER_SCOPE_DONE();
     return status;
 }
 
@@ -155,6 +179,12 @@ const char *p101_c_fact_kind_name(enum p101_c_fact_kind kind)
             break;
         case P101_C_FACT_KIND_TYPE:
             name = "TYPE";
+            break;
+        case P101_C_FACT_KIND_ENUM:
+            name = "ENUM";
+            break;
+        case P101_C_FACT_KIND_ENUMERATOR:
+            name = "ENUMERATOR";
             break;
         case P101_C_FACT_KIND_MACRO:
             name = "MACRO";
@@ -208,22 +238,30 @@ const char *p101_c_fact_status_name(enum p101_c_fact_status status)
 
 static bool parse_fact_bool(const struct p101_env *env, const char *text, bool *value)
 {
+    bool p101_single_result_;
     P101_TRACE_SCOPE(env);
     if(p101_strcmp(env, text, "0") == 0)
     {
-        *value = false;
-        return true;
+        *value              = false;
+        p101_single_result_ = true;
+        goto p101_single_exit_;
     }
     if(p101_strcmp(env, text, "1") == 0)
     {
-        *value = true;
-        return true;
+        *value              = true;
+        p101_single_result_ = true;
+        goto p101_single_exit_;
     }
-    return false;
+    p101_single_result_ = false;
+    goto p101_single_exit_;
+
+p101_single_exit_:
+    return p101_single_result_;
 }
 
 static size_t split_fact_line(const struct p101_env *env, char *line, char *fields[], size_t field_count)
 {
+    size_t p101_single_result_;
     size_t count;
     char  *cursor;
 
@@ -238,7 +276,8 @@ static size_t split_fact_line(const struct p101_env *env, char *line, char *fiel
 
     if(count == field_count && cursor != NULL)
     {
-        return field_count + 1U;
+        p101_single_result_ = field_count + 1U;
+        goto p101_single_exit_;
     }
 
     for(size_t i = 0; i < count; i++)
@@ -246,7 +285,11 @@ static size_t split_fact_line(const struct p101_env *env, char *line, char *fiel
         p101_record_unescape_field(fields[i]);
     }
 
-    return count;
+    p101_single_result_ = count;
+    goto p101_single_exit_;
+
+p101_single_exit_:
+    return p101_single_result_;
 }
 
 static char *find_char(char *text, char ch)
@@ -292,6 +335,14 @@ static enum p101_c_fact_kind parse_kind(const struct p101_env *env, const char *
     {
         kind = P101_C_FACT_KIND_TYPE;
     }
+    else if(p101_strcmp(env, text, "ENUM") == 0)
+    {
+        kind = P101_C_FACT_KIND_ENUM;
+    }
+    else if(p101_strcmp(env, text, "ENUMERATOR") == 0)
+    {
+        kind = P101_C_FACT_KIND_ENUMERATOR;
+    }
     else if(p101_strcmp(env, text, "MACRO") == 0)
     {
         kind = P101_C_FACT_KIND_MACRO;
@@ -306,14 +357,16 @@ static enum p101_c_fact_kind parse_kind(const struct p101_env *env, const char *
 static bool field_count_is_valid(enum p101_c_fact_kind kind, size_t field_count)
 {
     static const size_t minimum_fields[] = {
-        [P101_C_FACT_KIND_UNKNOWN]  = 0U,
-        [P101_C_FACT_KIND_FILE]     = FACT_BASE_FIELD_COUNT,
-        [P101_C_FACT_KIND_INCLUDE]  = FACT_INCLUDE_FIELDS,
-        [P101_C_FACT_KIND_FUNCTION] = FACT_FUNCTION_FIELDS,
-        [P101_C_FACT_KIND_CALL]     = FACT_CALL_FIELDS,
-        [P101_C_FACT_KIND_TYPE]     = FACT_VALUE_FIELDS,
-        [P101_C_FACT_KIND_MACRO]    = FACT_VALUE_FIELDS,
-        [P101_C_FACT_KIND_NOTE]     = FACT_VALUE_FIELDS,
+        [P101_C_FACT_KIND_UNKNOWN]    = 0U,
+        [P101_C_FACT_KIND_FILE]       = FACT_BASE_FIELD_COUNT,
+        [P101_C_FACT_KIND_INCLUDE]    = FACT_INCLUDE_FIELDS,
+        [P101_C_FACT_KIND_FUNCTION]   = FACT_FUNCTION_FIELDS,
+        [P101_C_FACT_KIND_CALL]       = FACT_CALL_FIELDS,
+        [P101_C_FACT_KIND_TYPE]       = FACT_VALUE_FIELDS,
+        [P101_C_FACT_KIND_ENUM]       = FACT_VALUE_FIELDS,
+        [P101_C_FACT_KIND_ENUMERATOR] = FACT_INCLUDE_FIELDS,
+        [P101_C_FACT_KIND_MACRO]      = FACT_VALUE_FIELDS,
+        [P101_C_FACT_KIND_NOTE]       = FACT_NOTE_FIELDS,
     };
 
     return field_count >= minimum_fields[kind];

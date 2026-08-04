@@ -6,6 +6,7 @@
 #include <p101_c/p101_stdio.h>
 #include <p101_c/p101_stdlib.h>
 #include <p101_c/p101_string.h>
+#include <p101_env/wrapper.h>
 #include <p101_filesystem/filesystem.h>
 #include <stdint.h>
 #include <sys/stat.h>
@@ -28,6 +29,7 @@ struct scan_context
     void                                 *observer_context;
     CXTranslationUnit                     translation_unit;
     const char                           *current_function;
+    char                                  current_enum[ANALYSIS_NAME_SIZE];
     char                                  pending_error_argument[ANALYSIS_NAME_SIZE];
     char                                  checked_error_argument[ANALYSIS_NAME_SIZE];
     unsigned                              conditional_depth;
@@ -52,6 +54,7 @@ static bool scan_compile_database(const struct p101_env *env, struct p101_error 
 static enum CXChildVisitResult visit_cursor(CXCursor cursor, CXCursor parent, CXClientData client_data);
 static void                    visit_inclusion(CXFile included_file, CXSourceLocation *inclusion_stack, unsigned include_length, CXClientData client_data);
 static void                    emit_cursor_record(struct scan_context *context, CXCursor cursor, CXCursor parent);
+static char                   *enum_cursor_name(const struct p101_env *env, struct p101_error *err, CXCursor cursor, CXCursor parent);
 static void                    emit_mutation_record(struct scan_context *context, CXCursor cursor, CXCursor parent, const char *path, size_t line, size_t column);
 static bool                    emit_record(struct scan_context *context, const struct p101_c_analysis_record *record);
 static char                   *copy_cx_string(const struct p101_env *env, struct p101_error *err, CXString value);
@@ -108,6 +111,7 @@ static char *copy_cx_string(const struct p101_env *env, struct p101_error *err, 
 
 static bool has_suffix(const struct p101_env *env, const char *path, const char *suffix)
 {
+    bool   p101_single_result_;
     size_t path_length;
     size_t suffix_length;
 
@@ -116,40 +120,59 @@ static bool has_suffix(const struct p101_env *env, const char *path, const char 
     suffix_length = p101_strlen(env, suffix);
     if(path_length < suffix_length)
     {
-        return false;
+        p101_single_result_ = false;
+        goto p101_single_exit_;
     }
-    return p101_strcmp(env, path + path_length - suffix_length, suffix) == 0;
+    p101_single_result_ = p101_strcmp(env, path + path_length - suffix_length, suffix) == 0;
+    goto p101_single_exit_;
+
+p101_single_exit_:
+    return p101_single_result_;
 }
 
 static bool path_has_source_suffix(const struct p101_env *env, const char *path)
 {
+    bool p101_single_result_;
     P101_TRACE_SCOPE(env);
     if(has_suffix(env, path, ".c") || has_suffix(env, path, ".cc") || has_suffix(env, path, ".cpp") || has_suffix(env, path, ".cxx") || has_suffix(env, path, ".m") || has_suffix(env, path, ".mm"))
     {
-        return true;
+        p101_single_result_ = true;
+        goto p101_single_exit_;
     }
-    return false;
+    p101_single_result_ = false;
+    goto p101_single_exit_;
+
+p101_single_exit_:
+    return p101_single_result_;
 }
 
 static bool path_has_header_suffix(const struct p101_env *env, const char *path)
 {
+    bool p101_single_result_;
     P101_TRACE_SCOPE(env);
     if(has_suffix(env, path, ".h") || has_suffix(env, path, ".hh") || has_suffix(env, path, ".hpp") || has_suffix(env, path, ".hxx"))
     {
-        return true;
+        p101_single_result_ = true;
+        goto p101_single_exit_;
     }
-    return false;
+    p101_single_result_ = false;
+    goto p101_single_exit_;
+
+p101_single_exit_:
+    return p101_single_result_;
 }
 
 static bool path_is_admitted(const struct p101_env *env, struct p101_error *err, const struct p101_c_analysis_options *options, const char *path)
 {
+    bool   p101_single_result_;
     size_t index;
     char   actual[ANALYSIS_PATH_SIZE];
 
     P101_TRACE_SCOPE(env);
     if(path == NULL || path[0] == '\0' || p101_realpath(env, err, path, actual) == NULL)
     {
-        return false;
+        p101_single_result_ = false;
+        goto p101_single_exit_;
     }
     for(index = 0; index < options->path_count; index++)
     {
@@ -164,23 +187,34 @@ static bool path_is_admitted(const struct p101_env *env, struct p101_error *err,
         length = p101_strlen(env, root);
         if(p101_strncmp(env, actual, root, length) == 0 && (actual[length] == '\0' || actual[length] == '/'))
         {
-            return true;
+            p101_single_result_ = true;
+            goto p101_single_exit_;
         }
     }
-    return false;
+    p101_single_result_ = false;
+    goto p101_single_exit_;
+
+p101_single_exit_:
+    return p101_single_result_;
 }
 
 static bool emit_record(struct scan_context *context, const struct p101_c_analysis_record *record)
 {
+    bool p101_single_result_;
     bool keep_going;
 
     keep_going = context->observer(context->env, context->err, record, context->observer_context);
     if(!keep_going || p101_error_has_error(context->err))
     {
-        context->stopped = true;
-        return false;
+        context->stopped    = true;
+        p101_single_result_ = false;
+        goto p101_single_exit_;
     }
-    return true;
+    p101_single_result_ = true;
+    goto p101_single_exit_;
+
+p101_single_exit_:
+    return p101_single_result_;
 }
 
 static void cursor_location(const struct p101_env *env, struct p101_error *err, CXCursor cursor, char **path, size_t *line, size_t *column, size_t *offset)
@@ -218,6 +252,7 @@ static bool cursor_is_definition(CXCursor cursor)
 
 static int function_parameter_index(const struct p101_env *env, CXCursor cursor, const char *needle)
 {
+    int p101_single_result_;
     int index;
     int count;
 
@@ -234,11 +269,16 @@ static int function_parameter_index(const struct p101_env *env, CXCursor cursor,
         if(type_text != NULL && p101_strstr(env, type_text, needle) != NULL)
         {
             clang_disposeString(spelling);
-            return index;
+            p101_single_result_ = index;
+            goto p101_single_exit_;
         }
         clang_disposeString(spelling);
     }
-    return -1;
+    p101_single_result_ = -1;
+    goto p101_single_exit_;
+
+p101_single_exit_:
+    return p101_single_result_;
 }
 
 static bool cursor_type_contains(const struct p101_env *env, CXCursor cursor, const char *needle)
@@ -260,6 +300,7 @@ static bool cursor_type_contains(const struct p101_env *env, CXCursor cursor, co
 
 static bool call_discards_error(const struct p101_env *env, struct p101_error *err, CXCursor cursor, unsigned argument_index, const char *path)
 {
+    bool         p101_single_result_;
     CXCursor     argument;
     CXEvalResult evaluation;
     char        *text;
@@ -269,12 +310,14 @@ static bool call_discards_error(const struct p101_env *env, struct p101_error *e
 
     if(argument_index >= (unsigned)clang_Cursor_getNumArguments(cursor))
     {
-        return false;
+        p101_single_result_ = false;
+        goto p101_single_exit_;
     }
     argument = clang_Cursor_getArgument(cursor, argument_index);
     if(clang_getCursorKind(argument) == CXCursor_IntegerLiteral || clang_getCursorKind(argument) == CXCursor_CXXNullPtrLiteralExpr)
     {
-        return true;
+        p101_single_result_ = true;
+        goto p101_single_exit_;
     }
     evaluation = clang_Cursor_Evaluate(argument);
     if(evaluation != NULL)
@@ -285,14 +328,16 @@ static bool call_discards_error(const struct p101_env *env, struct p101_error *e
         if(kind == CXEval_Int && clang_EvalResult_getAsLongLong(evaluation) == 0)
         {
             clang_EvalResult_dispose(evaluation);
-            return true;
+            p101_single_result_ = true;
+            goto p101_single_exit_;
         }
         clang_EvalResult_dispose(evaluation);
     }
     text = cursor_argument_text(env, err, cursor, argument_index, path);
     if(text == NULL)
     {
-        return false;
+        p101_single_result_ = false;
+        goto p101_single_exit_;
     }
     write_index = 0U;
     for(read_index = 0U; text[read_index] != '\0' && write_index + 1U < sizeof(normalized); read_index++)
@@ -309,13 +354,19 @@ static bool call_discards_error(const struct p101_env *env, struct p101_error *e
     p101_free(env, text);
     if(p101_strcmp(env, normalized, "NULL") == 0 || p101_strcmp(env, normalized, "nullptr") == 0 || p101_strcmp(env, normalized, "0") == 0 || p101_strcmp(env, normalized, "(void*)0") == 0 || p101_strcmp(env, normalized, "((void*)0)") == 0)
     {
-        return true;
+        p101_single_result_ = true;
+        goto p101_single_exit_;
     }
-    return false;
+    p101_single_result_ = false;
+    goto p101_single_exit_;
+
+p101_single_exit_:
+    return p101_single_result_;
 }
 
 static char *cursor_argument_text(const struct p101_env *env, struct p101_error *err, CXCursor cursor, unsigned index, const char *path)
 {
+    char         *p101_single_result_;
     CXCursor      argument;
     CXSourceRange range;
     CXFile        file;
@@ -326,7 +377,8 @@ static char *cursor_argument_text(const struct p101_env *env, struct p101_error 
 
     if(index >= (unsigned)clang_Cursor_getNumArguments(cursor))
     {
-        return NULL;
+        p101_single_result_ = NULL;
+        goto p101_single_exit_;
     }
     argument = clang_Cursor_getArgument(cursor, index);
     range    = clang_getCursorExtent(argument);
@@ -334,13 +386,19 @@ static char *cursor_argument_text(const struct p101_env *env, struct p101_error 
     clang_getExpansionLocation(clang_getRangeEnd(range), &file, &line, &column, &end);
     if(file == NULL || end < start)
     {
-        return NULL;
+        p101_single_result_ = NULL;
+        goto p101_single_exit_;
     }
-    return source_range_text(env, err, path, start, end);
+    p101_single_result_ = source_range_text(env, err, path, start, end);
+    goto p101_single_exit_;
+
+p101_single_exit_:
+    return p101_single_result_;
 }
 
 static bool source_near_cursor_contains(const struct p101_env *env, struct p101_error *err, CXCursor cursor, const char *path, const char *needle)
 {
+    bool          p101_single_result_;
     CXSourceRange range;
     CXFile        file;
     unsigned      line;
@@ -358,11 +416,13 @@ static bool source_near_cursor_contains(const struct p101_env *env, struct p101_
     clang_getExpansionLocation(clang_getRangeEnd(range), &file, &line, &column, &end);
     if(file == NULL || end < start)
     {
-        return false;
+        p101_single_result_ = false;
+        goto p101_single_exit_;
     }
     if(p101_stat(env, err, path, &status) != 0 || status.st_size < 0)
     {
-        return false;
+        p101_single_result_ = false;
+        goto p101_single_exit_;
     }
     window_start = start > ANNOTATION_WINDOW_SIZE ? start - ANNOTATION_WINDOW_SIZE : 0U;
     window_end   = (size_t)end + ANNOTATION_WINDOW_SIZE;
@@ -373,11 +433,16 @@ static bool source_near_cursor_contains(const struct p101_env *env, struct p101_
     text = source_range_text(env, err, path, window_start, window_end);
     if(text == NULL)
     {
-        return false;
+        p101_single_result_ = false;
+        goto p101_single_exit_;
     }
     found = p101_strstr(env, text, needle) != NULL;
     p101_free(env, text);
-    return found;
+    p101_single_result_ = found;
+    goto p101_single_exit_;
+
+p101_single_exit_:
+    return p101_single_result_;
 }
 
 static void emit_note(struct scan_context *context, const char *path, size_t line, size_t column, bool is_header, const char *name)
@@ -406,6 +471,24 @@ static void cursor_extent_offsets(CXCursor cursor, size_t *start, size_t *end)
     clang_getExpansionLocation(clang_getRangeEnd(range), NULL, NULL, NULL, &end_offset);
     *start = start_offset;
     *end   = end_offset;
+}
+
+static char *enum_cursor_name(const struct p101_env *env, struct p101_error *err, CXCursor cursor, CXCursor parent)
+{
+    char *name;
+
+    P101_TRACE_SCOPE(env);
+    name = copy_cx_string(env, err, clang_getCursorSpelling(cursor));
+    if(name != NULL && clang_getCursorKind(parent) == CXCursor_TypedefDecl)
+    {
+        p101_free(env, name);
+        name = copy_cx_string(env, err, clang_getCursorSpelling(parent));
+    }
+    else if(name != NULL && p101_strncmp(env, name, "enum (unnamed", sizeof("enum (unnamed") - 1U) == 0)
+    {
+        name[0] = '\0';
+    }
+    return name;
 }
 
 static void emit_cursor_record(struct scan_context *context, CXCursor cursor, CXCursor parent)
@@ -590,7 +673,42 @@ static void emit_cursor_record(struct scan_context *context, CXCursor cursor, CX
         emit_mutation_record(context, cursor, parent, path, line, column);
         p101_free(context->env, error_argument);
     }
-    else if(cursor_kind == CXCursor_TypedefDecl || cursor_kind == CXCursor_StructDecl || cursor_kind == CXCursor_UnionDecl || cursor_kind == CXCursor_EnumDecl)
+    else if(cursor_kind == CXCursor_ReturnStmt)
+    {
+        emit_note(context, path, line, column, record.is_header, "FUNCTION_RETURN");
+    }
+    else if(cursor_kind == CXCursor_EnumDecl)
+    {
+        record.kind      = P101_C_ANALYSIS_ENUM;
+        record.is_public = record.is_header;
+        name             = enum_cursor_name(context->env, context->err, cursor, parent);
+        record.name      = name;
+        if(name == NULL)
+        {
+            context->stopped = true;
+        }
+        else if(name[0] != '\0')
+        {
+            (void)emit_record(context, &record);
+        }
+    }
+    else if(cursor_kind == CXCursor_EnumConstantDecl)
+    {
+        record.kind      = P101_C_ANALYSIS_ENUMERATOR;
+        record.is_public = record.is_header;
+        name             = copy_cx_string(context->env, context->err, clang_getCursorSpelling(cursor));
+        record.name      = name;
+        record.type      = context->current_enum;
+        if(name == NULL)
+        {
+            context->stopped = true;
+        }
+        else if(context->current_enum[0] != '\0')
+        {
+            (void)emit_record(context, &record);
+        }
+    }
+    else if(cursor_kind == CXCursor_TypedefDecl || cursor_kind == CXCursor_StructDecl || cursor_kind == CXCursor_UnionDecl)
     {
         record.kind = P101_C_ANALYSIS_TYPE;
         name        = copy_cx_string(context->env, context->err, clang_getCursorSpelling(cursor));
@@ -662,17 +780,19 @@ static void emit_cursor_record(struct scan_context *context, CXCursor cursor, CX
 
 static enum CXChildVisitResult visit_cursor(CXCursor cursor, CXCursor parent, CXClientData client_data)
 {
-    struct scan_context *context;
-    enum CXCursorKind    kind;
-    const char          *saved_function;
-    char                *function_name;
-    bool                 saved_inside_return;
-    unsigned             saved_conditional_depth;
-    char                 saved_pending_error[ANALYSIS_NAME_SIZE];
-    char                 saved_checked_error[ANALYSIS_NAME_SIZE];
-    bool                 function_scope;
-    bool                 conditional_scope;
-    bool                 saved_conditional_has_return;
+    enum CXChildVisitResult p101_single_result_;
+    struct scan_context    *context;
+    enum CXCursorKind       kind;
+    const char             *saved_function;
+    char                   *function_name;
+    bool                    saved_inside_return;
+    unsigned                saved_conditional_depth;
+    char                    saved_pending_error[ANALYSIS_NAME_SIZE];
+    char                    saved_checked_error[ANALYSIS_NAME_SIZE];
+    char                    saved_enum[ANALYSIS_NAME_SIZE];
+    bool                    function_scope;
+    bool                    conditional_scope;
+    bool                    saved_conditional_has_return;
 
     context                      = (struct scan_context *)client_data;
     saved_function               = context->current_function;
@@ -681,13 +801,15 @@ static enum CXChildVisitResult visit_cursor(CXCursor cursor, CXCursor parent, CX
     saved_conditional_has_return = context->conditional_has_return;
     p101_snprintf(context->env, context->err, saved_pending_error, sizeof(saved_pending_error), "%s", context->pending_error_argument);
     p101_snprintf(context->env, context->err, saved_checked_error, sizeof(saved_checked_error), "%s", context->checked_error_argument);
+    p101_snprintf(context->env, context->err, saved_enum, sizeof(saved_enum), "%s", context->current_enum);
     function_scope    = false;
     conditional_scope = false;
     function_name     = NULL;
     emit_cursor_record(context, cursor, parent);
     if(context->stopped)
     {
-        return CXChildVisit_Break;
+        p101_single_result_ = CXChildVisit_Break;
+        goto p101_single_exit_;
     }
 
     kind = clang_getCursorKind(cursor);
@@ -715,10 +837,32 @@ static enum CXChildVisitResult visit_cursor(CXCursor cursor, CXCursor parent, CX
         context->pending_error_argument[0] = '\0';
         context->checked_error_argument[0] = '\0';
     }
+    if(kind == CXCursor_EnumDecl)
+    {
+        char *enum_name;
+
+        enum_name = enum_cursor_name(context->env, context->err, cursor, parent);
+        if(enum_name == NULL)
+        {
+            context->stopped = true;
+        }
+        else
+        {
+            p101_snprintf(context->env, context->err, context->current_enum, sizeof(context->current_enum), "%s", enum_name);
+        }
+        p101_free(context->env, enum_name);
+    }
+    if(context->stopped)
+    {
+        p101_free(context->env, function_name);
+        p101_single_result_ = CXChildVisit_Break;
+        goto p101_single_exit_;
+    }
     clang_visitChildren(cursor, visit_cursor, context);
     context->current_function  = saved_function;
     context->inside_return     = saved_inside_return;
     context->conditional_depth = saved_conditional_depth;
+    p101_snprintf(context->env, context->err, context->current_enum, sizeof(context->current_enum), "%s", saved_enum);
     if(function_scope)
     {
         p101_snprintf(context->env, context->err, context->pending_error_argument, sizeof(context->pending_error_argument), "%s", saved_pending_error);
@@ -740,9 +884,14 @@ static enum CXChildVisitResult visit_cursor(CXCursor cursor, CXCursor parent, CX
     p101_free(context->env, function_name);
     if(context->stopped)
     {
-        return CXChildVisit_Break;
+        p101_single_result_ = CXChildVisit_Break;
+        goto p101_single_exit_;
     }
-    return CXChildVisit_Continue;
+    p101_single_result_ = CXChildVisit_Continue;
+    goto p101_single_exit_;
+
+p101_single_exit_:
+    return p101_single_result_;
 }
 
 static void visit_inclusion(CXFile included_file, CXSourceLocation *inclusion_stack, unsigned include_length, CXClientData client_data)
@@ -757,14 +906,14 @@ static void visit_inclusion(CXFile included_file, CXSourceLocation *inclusion_st
     context   = inclusion->scan;
     if(context->stopped || included_file == NULL)
     {
-        return;
+        goto p101_single_exit_;
     }
     name = clang_getFileName(included_file);
     path = copy_cx_string(context->env, context->err, name);
     if(path == NULL || !path_is_admitted(context->env, context->err, context->options, path))
     {
         p101_free(context->env, path);
-        return;
+        goto p101_single_exit_;
     }
 
     p101_memset(context->env, &record, 0, sizeof(record));
@@ -776,10 +925,14 @@ static void visit_inclusion(CXFile included_file, CXSourceLocation *inclusion_st
     (void)inclusion_stack;
     (void)include_length;
     p101_free(context->env, path);
+
+p101_single_exit_:
+    return;
 }
 
 static char *include_target_text(const struct p101_env *env, struct p101_error *err, CXCursor cursor, const char *path, bool *is_local)
 {
+    char         *p101_single_result_;
     CXSourceRange range;
     CXFile        file;
     unsigned      line;
@@ -801,12 +954,14 @@ static char *include_target_text(const struct p101_env *env, struct p101_error *
     clang_getSpellingLocation(clang_getRangeEnd(range), &file, &line, &column, &end);
     if(file == NULL || end < start)
     {
-        return NULL;
+        p101_single_result_ = NULL;
+        goto p101_single_exit_;
     }
     text = source_range_text(env, err, path, start, end);
     if(text == NULL)
     {
-        return NULL;
+        p101_single_result_ = NULL;
+        goto p101_single_exit_;
     }
 
     quote   = p101_strchr(env, text, '"');
@@ -819,7 +974,8 @@ static char *include_target_text(const struct p101_env *env, struct p101_error *
     if(opening == NULL)
     {
         p101_free(env, text);
-        return NULL;
+        p101_single_result_ = NULL;
+        goto p101_single_exit_;
     }
     *is_local         = *opening == '"';
     closing_character = '>';
@@ -831,16 +987,22 @@ static char *include_target_text(const struct p101_env *env, struct p101_error *
     if(closing == NULL)
     {
         p101_free(env, text);
-        return NULL;
+        p101_single_result_ = NULL;
+        goto p101_single_exit_;
     }
     length = (size_t)(closing - (opening + 1));
     p101_memmove(env, text, opening + 1, length);
-    text[length] = '\0';
-    return text;
+    text[length]        = '\0';
+    p101_single_result_ = text;
+    goto p101_single_exit_;
+
+p101_single_exit_:
+    return p101_single_result_;
 }
 
 static char *source_range_text(const struct p101_env *env, struct p101_error *err, const char *path, size_t start, size_t end)
 {
+    char  *p101_single_result_;
     FILE  *stream;
     char  *text;
     size_t length;
@@ -854,31 +1016,36 @@ static char *source_range_text(const struct p101_env *env, struct p101_error *er
      */
     if(end < start)
     {
-        return NULL;
+        p101_single_result_ = NULL;
+        goto p101_single_exit_;
     }
     if(end - start > SIZE_MAX - 1U)
     {
         P101_ERROR_RAISE_CHECK(err);
-        return NULL;
+        p101_single_result_ = NULL;
+        goto p101_single_exit_;
     }
     length = end - start;
     text   = (char *)p101_malloc(env, err, length + 1U);
     if(text == NULL)
     {
-        return NULL;
+        p101_single_result_ = NULL;
+        goto p101_single_exit_;
     }
     stream = p101_fopen(env, err, path, "rb");
     if(stream == NULL)
     {
         p101_free(env, text);
-        return NULL;
+        p101_single_result_ = NULL;
+        goto p101_single_exit_;
     }
     if(p101_fseek(env, err, stream, (long)start, SEEK_SET) != 0)
     {
         /* P101_ERROR_CONTRACT_ALLOW_NO_ERROR: preserve the seek failure. */
         p101_fclose(env, NULL, stream);
         p101_free(env, text);
-        return NULL;
+        p101_single_result_ = NULL;
+        goto p101_single_exit_;
     }
     read_count = p101_fread(env, err, text, 1U, length, stream);
     if(read_count != length || p101_error_has_error(err))
@@ -886,16 +1053,22 @@ static char *source_range_text(const struct p101_env *env, struct p101_error *er
         /* P101_ERROR_CONTRACT_ALLOW_NO_ERROR: preserve the read failure. */
         p101_fclose(env, NULL, stream);
         p101_free(env, text);
-        return NULL;
+        p101_single_result_ = NULL;
+        goto p101_single_exit_;
     }
     p101_fclose(env, err, stream);
     if(p101_error_has_error(err))
     {
         p101_free(env, text);
-        return NULL;
+        p101_single_result_ = NULL;
+        goto p101_single_exit_;
     }
-    text[length] = '\0';
-    return text;
+    text[length]        = '\0';
+    p101_single_result_ = text;
+    goto p101_single_exit_;
+
+p101_single_exit_:
+    return p101_single_result_;
 }
 
 static void mutation_from_binary(struct scan_context *context, CXCursor cursor, const char *path, size_t line, size_t column)
@@ -969,6 +1142,7 @@ static void mutation_from_binary(struct scan_context *context, CXCursor cursor, 
 
 static bool mutation_cleanup_call(const struct p101_env *env, const char *name)
 {
+    bool                     p101_single_result_;
     static const char *const exact_names[] = {
         "p101_free",
         "p101_munmap",
@@ -986,23 +1160,30 @@ static bool mutation_cleanup_call(const struct p101_env *env, const char *name)
 
     if(p101_strncmp(env, name, "p101_", sizeof("p101_") - 1U) != 0)
     {
-        return false;
+        p101_single_result_ = false;
+        goto p101_single_exit_;
     }
     for(index = 0U; index < sizeof(exact_names) / sizeof(exact_names[0]); index++)
     {
         if(p101_strcmp(env, name, exact_names[index]) == 0)
         {
-            return true;
+            p101_single_result_ = true;
+            goto p101_single_exit_;
         }
     }
     for(index = 0U; index < sizeof(fragments) / sizeof(fragments[0]); index++)
     {
         if(p101_strstr(env, name, fragments[index]) != NULL)
         {
-            return true;
+            p101_single_result_ = true;
+            goto p101_single_exit_;
         }
     }
-    return false;
+    p101_single_result_ = false;
+    goto p101_single_exit_;
+
+p101_single_exit_:
+    return p101_single_result_;
 }
 
 static void mutation_from_call(struct scan_context *context, CXCursor cursor, CXCursor parent, const char *path, size_t line, size_t column)
@@ -1016,13 +1197,13 @@ static void mutation_from_call(struct scan_context *context, CXCursor cursor, CX
     referenced = clang_getCursorReferenced(cursor);
     if(clang_Cursor_isNull(referenced) != 0)
     {
-        return;
+        goto p101_single_exit_;
     }
     name = copy_cx_string(context->env, context->err, clang_getCursorSpelling(referenced));
     if(name == NULL)
     {
         context->stopped = true;
-        return;
+        goto p101_single_exit_;
     }
     for(index = 0U; index < sizeof(predicate_names) / sizeof(predicate_names[0]); index++)
     {
@@ -1073,7 +1254,7 @@ static void mutation_from_call(struct scan_context *context, CXCursor cursor, CX
             }
             clang_disposeTokens(context->translation_unit, tokens, token_count);
             p101_free(context->env, name);
-            return;
+            goto p101_single_exit_;
         }
     }
 
@@ -1114,6 +1295,9 @@ static void mutation_from_call(struct scan_context *context, CXCursor cursor, CX
         }
     }
     p101_free(context->env, name);
+
+p101_single_exit_:
+    return;
 }
 
 static void emit_mutation_record(struct scan_context *context, CXCursor cursor, CXCursor parent, const char *path, size_t line, size_t column)
@@ -1133,25 +1317,37 @@ static void emit_mutation_record(struct scan_context *context, CXCursor cursor, 
 
 static bool command_argument_takes_ignored_value(const struct p101_env *env, const char *argument)
 {
+    bool p101_single_result_;
     P101_TRACE_SCOPE(env);
     if(p101_strcmp(env, argument, "-o") == 0 || p101_strcmp(env, argument, "-MF") == 0 || p101_strcmp(env, argument, "-MT") == 0 || p101_strcmp(env, argument, "-MQ") == 0)
     {
-        return true;
+        p101_single_result_ = true;
+        goto p101_single_exit_;
     }
-    return false;
+    p101_single_result_ = false;
+    goto p101_single_exit_;
+
+p101_single_exit_:
+    return p101_single_result_;
 }
 
 static bool command_argument_takes_semantic_value(const struct p101_env *env, const char *argument)
 {
+    bool p101_single_result_;
     P101_TRACE_SCOPE(env);
     if(p101_strcmp(env, argument, "-D") == 0 || p101_strcmp(env, argument, "-U") == 0 || p101_strcmp(env, argument, "-I") == 0 || p101_strcmp(env, argument, "-F") == 0 || p101_strcmp(env, argument, "-include") == 0 ||
        p101_strcmp(env, argument, "-imacros") == 0 || p101_strcmp(env, argument, "-isystem") == 0 || p101_strcmp(env, argument, "-iquote") == 0 || p101_strcmp(env, argument, "-idirafter") == 0 || p101_strcmp(env, argument, "-iframework") == 0 ||
        p101_strcmp(env, argument, "-x") == 0 || p101_strcmp(env, argument, "-target") == 0 || p101_strcmp(env, argument, "--target") == 0 || p101_strcmp(env, argument, "-arch") == 0 || p101_strcmp(env, argument, "-isysroot") == 0 ||
        p101_strcmp(env, argument, "--sysroot") == 0 || p101_strcmp(env, argument, "--gcc-toolchain") == 0)
     {
-        return true;
+        p101_single_result_ = true;
+        goto p101_single_exit_;
     }
-    return false;
+    p101_single_result_ = false;
+    goto p101_single_exit_;
+
+p101_single_exit_:
+    return p101_single_result_;
 }
 
 static bool argument_has_prefix(const struct p101_env *env, const char *argument, const char *prefix)
@@ -1165,6 +1361,7 @@ static bool argument_has_prefix(const struct p101_env *env, const char *argument
 
 static bool command_argument_is_semantic(const struct p101_env *env, const char *argument)
 {
+    bool                     p101_single_result_;
     static const char *const exact_arguments[] = {"-ansi",           "-nostdinc",          "-nostdinc++",  "-nobuiltininc", "-pthread",  "-ObjC",         "-ObjC++",       "-fblocks",      "-fno-blocks",
                                                   "-fms-extensions", "-fno-ms-extensions", "-fdeclspec",   "-fno-declspec", "-fchar8_t", "-fno-char8_t",  "-fshort-wchar", "-fshort-enums", "-funsigned-char",
                                                   "-fsigned-char",   "-ffreestanding",     "-fno-builtin", "-fopenmp",      "-fmodules", "-fcxx-modules", "-m32",          "-m64"};
@@ -1199,43 +1396,62 @@ static bool command_argument_is_semantic(const struct p101_env *env, const char 
     {
         if(p101_strcmp(env, argument, exact_arguments[index]) == 0)
         {
-            return true;
+            p101_single_result_ = true;
+            goto p101_single_exit_;
         }
     }
     for(index = 0U; index < sizeof(prefixes) / sizeof(prefixes[0]); index++)
     {
         if(argument_has_prefix(env, argument, prefixes[index]))
         {
-            return true;
+            p101_single_result_ = true;
+            goto p101_single_exit_;
         }
     }
-    return false;
+    p101_single_result_ = false;
+    goto p101_single_exit_;
+
+p101_single_exit_:
+    return p101_single_result_;
 }
 
 static bool command_argument_is_output(const struct p101_env *env, const char *argument)
 {
+    bool p101_single_result_;
     P101_TRACE_SCOPE(env);
     if((argument[0] == '-' && argument[1] == 'o' && p101_strcmp(env, argument, "-ObjC") != 0) || p101_strncmp(env, argument, "-MF", sizeof("-MF") - 1U) == 0 || p101_strncmp(env, argument, "-MT", sizeof("-MT") - 1U) == 0 ||
        p101_strncmp(env, argument, "-MQ", sizeof("-MQ") - 1U) == 0)
     {
-        return true;
+        p101_single_result_ = true;
+        goto p101_single_exit_;
     }
-    return false;
+    p101_single_result_ = false;
+    goto p101_single_exit_;
+
+p101_single_exit_:
+    return p101_single_result_;
 }
 
 static bool command_argument_is_sysroot(const struct p101_env *env, const char *argument)
 {
+    bool p101_single_result_;
     P101_TRACE_SCOPE(env);
     if(p101_strcmp(env, argument, "-isysroot") == 0 || p101_strcmp(env, argument, "--sysroot") == 0 || p101_strncmp(env, argument, "-isysroot=", sizeof("-isysroot=") - 1U) == 0 || p101_strncmp(env, argument, "--sysroot=", sizeof("--sysroot=") - 1U) == 0)
     {
-        return true;
+        p101_single_result_ = true;
+        goto p101_single_exit_;
     }
-    return false;
+    p101_single_result_ = false;
+    goto p101_single_exit_;
+
+p101_single_exit_:
+    return p101_single_result_;
 }
 
 static bool scan_source(const struct p101_env *env, struct p101_error *err, const struct p101_c_analysis_options *options, p101_c_analysis_observer observer, void *observer_context, const char *source, const char *directory, const char *const arguments[],
                         size_t argument_count)
 {
+    bool                     p101_single_result_;
     CXIndex                  index;
     CXTranslationUnit        translation_unit;
     enum CXErrorCode         parse_status;
@@ -1305,7 +1521,8 @@ static bool scan_source(const struct p101_env *env, struct p101_error *err, cons
         p101_snprintf(env, err, resource_argument, sizeof(resource_argument), "-resource-dir=%s", P101_LIBCLANG_RESOURCE_DIR);
         if(p101_error_has_error(err))
         {
-            return false;
+            p101_single_result_ = false;
+            goto p101_single_exit_;
         }
         parse_arguments[parse_argument_count++] = resource_argument;
     }
@@ -1332,7 +1549,8 @@ static bool scan_source(const struct p101_env *env, struct p101_error *err, cons
     }
     if(p101_error_has_error(err))
     {
-        return false;
+        p101_single_result_ = false;
+        goto p101_single_exit_;
     }
 
     index                    = clang_createIndex(0, 0);
@@ -1364,9 +1582,11 @@ static bool scan_source(const struct p101_env *env, struct p101_error *err, cons
         }
         if(options->keep_going && p101_error_has_no_error(err))
         {
-            return true;
+            p101_single_result_ = true;
+            goto p101_single_exit_;
         }
-        return false;
+        p101_single_result_ = false;
+        goto p101_single_exit_;
     }
 
     p101_memset(env, &context, 0, sizeof(context));
@@ -1434,11 +1654,16 @@ static bool scan_source(const struct p101_env *env, struct p101_error *err, cons
     {
         (void)p101_chdir(env, err, previous_directory);
     }
-    return result;
+    p101_single_result_ = result;
+    goto p101_single_exit_;
+
+p101_single_exit_:
+    return p101_single_result_;
 }
 
 static bool should_skip_directory(const struct p101_env *env, const char *name)
 {
+    bool                     p101_single_result_;
     static const char *const skipped[] = {".git", ".hg", ".svn", "__pycache__", "build", "coverage", "debug", "dist", "profile"};
     size_t                   index;
 
@@ -1447,19 +1672,26 @@ static bool should_skip_directory(const struct p101_env *env, const char *name)
     {
         if(p101_strcmp(env, name, skipped[index]) == 0)
         {
-            return true;
+            p101_single_result_ = true;
+            goto p101_single_exit_;
         }
     }
     if(p101_strncmp(env, name, "build-", sizeof("build-") - 1U) == 0 || p101_strncmp(env, name, "coverage-", sizeof("coverage-") - 1U) == 0 || p101_strncmp(env, name, "debug-", sizeof("debug-") - 1U) == 0 ||
        p101_strncmp(env, name, "profile-", sizeof("profile-") - 1U) == 0)
     {
-        return true;
+        p101_single_result_ = true;
+        goto p101_single_exit_;
     }
-    return false;
+    p101_single_result_ = false;
+    goto p101_single_exit_;
+
+p101_single_exit_:
+    return p101_single_result_;
 }
 
 static bool scan_directory(const struct p101_env *env, struct p101_error *err, const struct p101_c_analysis_options *options, p101_c_analysis_observer observer, void *observer_context, const char *directory)    // NOLINT(misc-no-recursion)
 {
+    bool           p101_single_result_;
     DIR           *stream;
     struct dirent *entry;
     bool           result;
@@ -1469,7 +1701,8 @@ static bool scan_directory(const struct p101_env *env, struct p101_error *err, c
     stream = p101_opendir(env, err, directory);
     if(stream == NULL)
     {
-        return false;
+        p101_single_result_ = false;
+        goto p101_single_exit_;
     }
     while((entry = p101_readdir(env, err, stream)) != NULL && p101_error_has_no_error(err))
     {
@@ -1518,11 +1751,16 @@ static bool scan_directory(const struct p101_env *env, struct p101_error *err, c
     {
         result = false;
     }
-    return result;
+    p101_single_result_ = result;
+    goto p101_single_exit_;
+
+p101_single_exit_:
+    return p101_single_result_;
 }
 
 static bool scan_compile_database(const struct p101_env *env, struct p101_error *err, const struct p101_c_analysis_options *options, p101_c_analysis_observer observer, void *observer_context)
 {
+    bool                        p101_single_result_;
     char                        database_directory[ANALYSIS_PATH_SIZE];
     const char                 *separator;
     CXCompilationDatabase_Error database_error;
@@ -1536,12 +1774,14 @@ static bool scan_compile_database(const struct p101_env *env, struct p101_error 
     if(options->compile_database == NULL || p101_strlen(env, options->compile_database) >= sizeof(database_directory))
     {
         P101_ERROR_RAISE_USER(err, "The compilation-database path is too long.", 1);
-        return false;
+        p101_single_result_ = false;
+        goto p101_single_exit_;
     }
     p101_snprintf(env, err, database_directory, sizeof(database_directory), "%s", options->compile_database);
     if(p101_error_has_error(err))
     {
-        return false;
+        p101_single_result_ = false;
+        goto p101_single_exit_;
     }
     separator = p101_strrchr(env, database_directory, '/');
     if(separator == NULL)
@@ -1556,7 +1796,8 @@ static bool scan_compile_database(const struct p101_env *env, struct p101_error 
     if(database_error != CXCompilationDatabase_NoError)
     {
         P101_ERROR_RAISE_USER(err, "Unable to load the Clang compilation database.", 1);
-        return false;
+        p101_single_result_ = false;
+        goto p101_single_exit_;
     }
     commands      = clang_CompilationDatabase_getAllCompileCommands(database);
     command_count = clang_CompileCommands_getSize(commands);
@@ -1609,11 +1850,16 @@ static bool scan_compile_database(const struct p101_env *env, struct p101_error 
     }
     clang_CompileCommands_dispose(commands);
     clang_CompilationDatabase_dispose(database);
-    return result;
+    p101_single_result_ = result;
+    goto p101_single_exit_;
+
+p101_single_exit_:
+    return p101_single_result_;
 }
 
 bool p101_c_analysis_scan(const struct p101_env *env, struct p101_error *err, const struct p101_c_analysis_options *options, p101_c_analysis_observer observer, void *context)
 {
+    bool                           p101_single_result_;
     struct p101_c_analysis_options normalized;
     const char                   **normalized_paths;
     char (*path_storage)[ANALYSIS_PATH_SIZE];
@@ -1621,17 +1867,20 @@ bool p101_c_analysis_scan(const struct p101_env *env, struct p101_error *err, co
     size_t index;
 
     P101_TRACE_SCOPE(env);
+    P101_WRAPPER_FAULT_SCOPE_RETURN(env, err, result, false);
     if(options == NULL || observer == NULL || options->paths == NULL || options->path_count == 0U)
     {
         P101_ERROR_RAISE_CHECK(err);
-        return false;
+        p101_single_result_ = false;
+        goto p101_single_exit_;
     }
     for(index = 0U; index < options->path_count; index++)
     {
         if(options->paths[index] == NULL)
         {
             P101_ERROR_RAISE_CHECK(err);
-            return false;
+            p101_single_result_ = false;
+            goto p101_single_exit_;
         }
     }
 
@@ -1641,7 +1890,8 @@ bool p101_c_analysis_scan(const struct p101_env *env, struct p101_error *err, co
     {
         p101_free(env, path_storage);
         p101_free(env, (void *)normalized_paths);
-        return false;
+        p101_single_result_ = false;
+        goto p101_single_exit_;
     }
     normalized = *options;
     for(index = 0U; index < options->path_count; index++)
@@ -1689,31 +1939,49 @@ bool p101_c_analysis_scan(const struct p101_env *env, struct p101_error *err, co
     }
     p101_free(env, path_storage);
     p101_free(env, (void *)normalized_paths);
+    P101_WRAPPER_SCOPE_DONE();
     if(result && p101_error_has_no_error(err))
     {
-        return true;
+        p101_single_result_ = true;
+        goto p101_single_exit_;
     }
-    return false;
+    p101_single_result_ = false;
+    goto p101_single_exit_;
+
+p101_single_exit_:
+    return p101_single_result_;
 }
 
 const char *p101_c_analysis_kind_name(enum p101_c_analysis_kind kind)
 {
-    static const char *const names[] = {"FILE", "INCLUDE", "FUNCTION", "CALL", "TYPE", "MACRO", "NOTE", "MUTATION", "DIAGNOSTIC"};
+    const char              *p101_single_result_;
+    static const char *const names[] = {"FILE", "INCLUDE", "FUNCTION", "CALL", "TYPE", "ENUM", "ENUMERATOR", "MACRO", "NOTE", "MUTATION", "DIAGNOSTIC"};
 
     if(kind < P101_C_ANALYSIS_FILE || kind > P101_C_ANALYSIS_DIAGNOSTIC)
     {
-        return "UNKNOWN";
+        p101_single_result_ = "UNKNOWN";
+        goto p101_single_exit_;
     }
-    return names[kind];
+    p101_single_result_ = names[kind];
+    goto p101_single_exit_;
+
+p101_single_exit_:
+    return p101_single_result_;
 }
 
 const char *p101_c_mutation_kind_name(enum p101_c_mutation_kind kind)
 {
+    const char              *p101_single_result_;
     static const char *const names[] = {"none", "comparison-boundary", "logical-connective", "arithmetic-operator", "error-predicate", "skip-cleanup"};
 
     if(kind < P101_C_MUTATION_NONE || kind > P101_C_MUTATION_SKIP_CLEANUP)
     {
-        return "unknown";
+        p101_single_result_ = "unknown";
+        goto p101_single_exit_;
     }
-    return names[kind];
+    p101_single_result_ = names[kind];
+    goto p101_single_exit_;
+
+p101_single_exit_:
+    return p101_single_result_;
 }

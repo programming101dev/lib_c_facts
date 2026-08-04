@@ -13,31 +13,36 @@ round-trip.
 ## Record format
 
 ```text
-P101FACT<TAB>2<TAB>kind<TAB>path<TAB>module<TAB>is_header<TAB>line...
+P101FACT<TAB>4<TAB>kind<TAB>path<TAB>module<TAB>is_header<TAB>line...
 ```
 
-The current version is `2`. Extra fields depend on `kind`:
+The current version is `4`. Extra fields depend on `kind`:
 
 | Kind | Extra fields |
 | --- | --- |
 | `FILE` | none |
 | `INCLUDE` | `target`, `is_local` |
 | `FUNCTION` | `name`, `is_static`, `is_header_declaration` |
-| `CALL` | `name`, `needs_env`, `needs_error` |
+| `CALL` | `name`, `needs_env`, `needs_error`, `caller` |
 | `TYPE` | `name` |
+| `ENUM` | `name` |
+| `ENUMERATOR` | `name`, `enum_type` |
 | `MACRO` | `name` |
-| `NOTE` | `name` |
+| `NOTE` | `name`, `caller`, `column` |
 
 Variable fields escape backslash, tab, newline, and carriage return as `\\`,
 `\t`, `\n`, and `\r`.
 
 Known `NOTE` values include `ENV_CONTRACT`, `ERROR_CONTRACT`, `ENV_USE`,
-`ERROR_USE`, `TRACE_USE`, `ERROR_CHECK`, and `ERROR_OPTIONAL`. Consumers should
-ignore note values they do not understand.
+`ERROR_USE`, `TRACE_USE`, `ERROR_CHECK`, `ERROR_OPTIONAL`, `ERROR_DISCARD`,
+`ERROR_PROPAGATED`, `ERROR_UNCHECKED_CHAIN`, and `FUNCTION_RETURN`. Consumers
+should ignore note values they do not understand.
 
 The two `CALL` flags are derived from the resolved callee declaration in
-Clang's AST. They let policy tools reason from the actual wrapper signature
-instead of maintaining private lists of wrapper names.
+Clang's AST. `CALL` and `NOTE` records preserve the enclosing function across
+replay. Together they let policy tools reason from the actual wrapper
+signature and enforce caller-sensitive rules without maintaining private name
+lists.
 
 ## Ownership and compatibility
 
@@ -45,8 +50,8 @@ instead of maintaining private lists of wrapper names.
 Error handling, wrapper-boundary rules, module-design thresholds, mutation
 policy, and other judgments remain in their individual tools.
 
-Version 1 is intentionally rejected. A consumer must not silently interpret a
-snapshot with different call semantics.
+Older versions are intentionally rejected. A consumer must not silently
+interpret a snapshot with different call semantics.
 
 The acquisition API reports only translation units admitted by the requested
 paths and compile database. Its error-flow notes use resolved AST calls and
