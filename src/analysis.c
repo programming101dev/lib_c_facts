@@ -20,6 +20,8 @@ enum
     ANNOTATION_WINDOW_SIZE = 512
 };
 
+typedef char analysis_path[ANALYSIS_PATH_SIZE];
+
 struct scan_context
 {
     const struct p101_env                *env;
@@ -1862,9 +1864,9 @@ bool p101_c_analysis_scan(const struct p101_env *env, struct p101_error *err, co
     bool                           p101_single_result_;
     struct p101_c_analysis_options normalized;
     const char                   **normalized_paths;
-    char (*path_storage)[ANALYSIS_PATH_SIZE];
-    bool   result;
-    size_t index;
+    analysis_path                 *path_storage;
+    bool                           result;
+    size_t                         index;
 
     P101_TRACE_SCOPE(env);
     P101_WRAPPER_FAULT_SCOPE_RETURN(env, err, result, false);
@@ -1885,7 +1887,7 @@ bool p101_c_analysis_scan(const struct p101_env *env, struct p101_error *err, co
     }
 
     normalized_paths = (const char **)p101_calloc(env, err, options->path_count, sizeof(*normalized_paths));
-    path_storage     = (char (*)[ANALYSIS_PATH_SIZE])p101_calloc(env, err, options->path_count, sizeof(*path_storage));
+    path_storage     = (analysis_path *)p101_calloc(env, err, options->path_count, sizeof(*path_storage));
     if(normalized_paths == NULL || path_storage == NULL)
     {
         p101_free(env, path_storage);
