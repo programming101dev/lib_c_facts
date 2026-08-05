@@ -112,13 +112,12 @@ static bool count_record(const struct p101_env *callback_env, struct p101_error 
         {
             counts->error_discards++;
         }
-        counts->saw_error_optional   = counts->saw_error_optional || strcmp(record->name, "ERROR_OPTIONAL") == 0;
-        counts->saw_error_propagated = counts->saw_error_propagated || strcmp(record->name, "ERROR_PROPAGATED") == 0;
-        counts->saw_unchecked_chain  = counts->saw_unchecked_chain || strcmp(record->name, "ERROR_UNCHECKED_CHAIN") == 0;
-        counts->saw_function_return  = counts->saw_function_return || strcmp(record->name, "FUNCTION_RETURN") == 0;
-        counts->saw_function_return_caller =
-            counts->saw_function_return_caller || (strcmp(record->name, "FUNCTION_RETURN") == 0 && record->caller != NULL && record->caller[0] != '\0');
-        counts->saw_trace            = counts->saw_trace || strcmp(record->name, "TRACE_USE") == 0;
+        counts->saw_error_optional         = counts->saw_error_optional || strcmp(record->name, "ERROR_OPTIONAL") == 0;
+        counts->saw_error_propagated       = counts->saw_error_propagated || strcmp(record->name, "ERROR_PROPAGATED") == 0;
+        counts->saw_unchecked_chain        = counts->saw_unchecked_chain || strcmp(record->name, "ERROR_UNCHECKED_CHAIN") == 0;
+        counts->saw_function_return        = counts->saw_function_return || strcmp(record->name, "FUNCTION_RETURN") == 0;
+        counts->saw_function_return_caller = counts->saw_function_return_caller || (strcmp(record->name, "FUNCTION_RETURN") == 0 && record->caller != NULL && record->caller[0] != '\0');
+        counts->saw_trace                  = counts->saw_trace || strcmp(record->name, "TRACE_USE") == 0;
     }
     else if(record->kind == P101_C_ANALYSIS_MUTATION)
     {
