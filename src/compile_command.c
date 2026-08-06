@@ -56,7 +56,7 @@ bool p101_c_facts_with_compile_command(const struct p101_env *env, struct p101_e
     unsigned                    command_count;
     bool                        found;
     bool                        result;
-    char                       *real_path;
+    const char                 *real_path;
     size_t                      database_length;
     bool                        error_present;
     bool                        no_error;
@@ -115,7 +115,7 @@ bool p101_c_facts_with_compile_command(const struct p101_env *env, struct p101_e
         CXString         cx_filename;
         char            *filename;
         char             canonical_filename[COMPILE_COMMAND_PATH_SIZE];
-        char            *canonical_result;
+        const char      *canonical_result;
         int              path_comparison;
 
         command     = clang_CompileCommands_getCommand(commands, command_index);

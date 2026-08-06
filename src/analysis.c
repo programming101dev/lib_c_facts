@@ -234,11 +234,11 @@ p101_single_exit_:
 
 static bool path_is_admitted(const struct p101_env *env, struct p101_error *err, const struct p101_c_analysis_options *options, const char *path)
 {
-    bool   p101_single_result_;
-    size_t index;
-    char   actual[ANALYSIS_PATH_SIZE];
-    char  *resolved;
-    int    comparison;
+    bool        p101_single_result_;
+    size_t      index;
+    char        actual[ANALYSIS_PATH_SIZE];
+    const char *resolved;
+    int         comparison;
 
     P101_TRACE_SCOPE(env);
     resolved = NULL;
@@ -567,7 +567,6 @@ static enum CXChildVisitResult find_semantic_role(CXCursor cursor, CXCursor pare
     struct semantic_role_context *context;
     enum CXChildVisitResult       result;
     enum CXCursorKind             kind;
-    int                           comparison;
 
     context = (struct semantic_role_context *)client_data;
     result  = CXChildVisit_Continue;
@@ -576,6 +575,7 @@ static enum CXChildVisitResult find_semantic_role(CXCursor cursor, CXCursor pare
     {
         CXString    spelling;
         const char *text;
+        int         comparison;
 
         spelling   = clang_getCursorSpelling(cursor);
         text       = clang_getCString(spelling);
@@ -620,7 +620,6 @@ static enum CXChildVisitResult emit_semantic_role(CXCursor cursor, CXCursor pare
     struct emit_semantic_role_context *context;
     enum CXChildVisitResult            result;
     enum CXCursorKind                  kind;
-    bool                               no_error;
 
     context = (struct emit_semantic_role_context *)client_data;
     kind    = clang_getCursorKind(cursor);
@@ -642,9 +641,11 @@ static enum CXChildVisitResult emit_semantic_role(CXCursor cursor, CXCursor pare
         {
             emit_note_as(context->scan, context->record->path, context->record->line, context->record->column, context->record->start_offset, context->record->end_offset, context->record->is_header, note, context->caller, context->caller_usr);
         }
-        no_error = p101_error_has_no_error(context->scan->err);
         if(written < 0 || (size_t)written >= sizeof(note))
         {
+            bool no_error;
+
+            no_error = p101_error_has_no_error(context->scan->err);
             if(role != NULL && no_error)
             {
                 P101_ERROR_RAISE_USER(context->scan->err, "A semantic role annotation exceeds the supported fact size.", EOVERFLOW);
@@ -821,7 +822,6 @@ static enum CXChildVisitResult find_semantic_role_function(CXCursor cursor, CXCu
     enum CXCursorKind            kind;
     bool                         is_function;
     bool                         has_role;
-    int                          comparison;
 
     lookup      = (struct semantic_role_lookup *)client_data;
     kind        = clang_getCursorKind(cursor);
@@ -837,6 +837,7 @@ static enum CXChildVisitResult find_semantic_role_function(CXCursor cursor, CXCu
         CXString    usr_value;
         const char *name;
         const char *usr;
+        int         comparison;
 
         spelling   = clang_getCursorSpelling(cursor);
         usr_value  = clang_getCursorUSR(cursor);
@@ -1790,8 +1791,6 @@ static void emit_cursor_record(struct scan_context *context, CXCursor cursor, CX
             references_function = cursor_kind_is_function(referenced_kind);
             if(references_function)
             {
-                char reference_note[ANALYSIS_IDENTITY_SIZE + sizeof("FUNCTION_REFERENCE:")];
-
                 usr = copy_cursor_usr(context->env, context->err, referenced);
                 if(usr == NULL)
                 {
@@ -1799,7 +1798,8 @@ static void emit_cursor_record(struct scan_context *context, CXCursor cursor, CX
                 }
                 else
                 {
-                    int written;
+                    char reference_note[ANALYSIS_IDENTITY_SIZE + sizeof("FUNCTION_REFERENCE:")];
+                    int  written;
 
                     written = p101_snprintf(context->env, context->err, reference_note, sizeof(reference_note), "FUNCTION_REFERENCE:%s", usr);
                     if(written < 0 || (size_t)written >= sizeof(reference_note))
@@ -1963,7 +1963,6 @@ static enum CXChildVisitResult visit_cursor(CXCursor cursor, CXCursor parent, CX
         char       *enum_name;
         CXString    enum_usr_value;
         const char *enum_usr;
-        const char *enum_usr_text;
 
         enum_name      = enum_cursor_name(context->env, context->err, cursor, parent);
         enum_usr_value = clang_getCursorUSR(cursor);
@@ -1974,6 +1973,8 @@ static enum CXChildVisitResult visit_cursor(CXCursor cursor, CXCursor parent, CX
         }
         else
         {
+            const char *enum_usr_text;
+
             enum_usr_text = "";
             if(enum_usr != NULL)
             {
@@ -2275,12 +2276,13 @@ static void mutation_from_binary(struct scan_context *context, CXCursor cursor, 
         CXString    spelling;
         const char *token_text;
         size_t      replacement_index;
-        int         comparison;
 
         spelling   = clang_getTokenSpelling(context->translation_unit, tokens[index]);
         token_text = clang_getCString(spelling);
         for(replacement_index = 0U; replacement_index < sizeof(originals) / sizeof(originals[0]); replacement_index++)
         {
+            int comparison;
+
             comparison = 1;
             if(token_text != NULL)
             {
@@ -2444,7 +2446,6 @@ static void mutation_from_call(struct scan_context *context, CXCursor cursor, CX
         char                         *original;
         CXSourceLocation              range_start;
         CXSourceLocation              range_end;
-        bool                          emitted;
 
         range       = clang_getCursorExtent(cursor);
         range_start = clang_getRangeStart(range);
@@ -2454,6 +2455,8 @@ static void mutation_from_call(struct scan_context *context, CXCursor cursor, CX
         original = source_range_text(context->env, context->err, path, start_offset, end_offset);
         if(original != NULL)
         {
+            bool emitted;
+
             p101_memset(context->env, &record, 0, sizeof(record));
             record.kind         = P101_C_ANALYSIS_MUTATION;
             record.path         = path;
@@ -2769,7 +2772,7 @@ static bool scan_source(const struct p101_env *env, struct p101_error *err, cons
     changed_directory = false;
     if(directory != NULL && directory[0] != '\0')
     {
-        char *current_directory;
+        const char *current_directory;
 
         current_directory = p101_getcwd(env, err, previous_directory, sizeof(previous_directory));
         if(current_directory != NULL)
@@ -3125,8 +3128,6 @@ static bool scan_compile_database(const struct p101_env *env, struct p101_error 
         CXString         source_value;
         CXString         directory_value;
         bool             command_has_error;
-        bool             admitted;
-        bool             source_path;
         void            *allocation;
 
         command         = clang_CompileCommands_getCommand(commands, command_index);
@@ -3159,6 +3160,9 @@ static bool scan_compile_database(const struct p101_env *env, struct p101_error 
         }
         else
         {
+            bool admitted;
+            bool source_path;
+
             admitted    = path_is_admitted(env, err, options, source);
             source_path = path_has_source_suffix(env, source);
             if(admitted && source_path)
@@ -3232,7 +3236,7 @@ bool p101_c_analysis_scan(const struct p101_env *env, struct p101_error *err, co
     normalized = *options;
     for(index = 0U; index < options->path_count; index++)
     {
-        char *resolved_path;
+        const char *resolved_path;
 
         /* P101_ERROR_OPTIONAL rationale: a missing path remains literal. */
         resolved_path = p101_realpath(env, P101_ERROR_OPTIONAL, options->paths[index], path_storage[index]);
@@ -3258,10 +3262,6 @@ bool p101_c_analysis_scan(const struct p101_env *env, struct p101_error *err, co
         {
             struct stat status;
             const char *path;
-            bool        directory_path;
-            bool        regular_path;
-            bool        source_path;
-            bool        header_path;
             int         status_result;
 
             path          = normalized.paths[index];
@@ -3272,6 +3272,11 @@ bool p101_c_analysis_scan(const struct p101_env *env, struct p101_error *err, co
             }
             else
             {
+                bool directory_path;
+                bool regular_path;
+                bool source_path;
+                bool header_path;
+
                 directory_path = S_ISDIR(status.st_mode);
                 regular_path   = S_ISREG(status.st_mode);
                 source_path    = path_has_source_suffix(env, path);
