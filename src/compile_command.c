@@ -18,10 +18,12 @@ static char *copy_text(const struct p101_env *env, struct p101_error *err, const
 {
     char  *copy;
     size_t length;
+    void  *storage;
 
     P101_TRACE_SCOPE(env);
-    length = p101_strlen(env, text);
-    copy   = (char *)p101_malloc(env, err, length + 1U);
+    length  = p101_strlen(env, text);
+    storage = p101_malloc(env, err, length + 1U);
+    copy    = (char *)storage;
     if(copy != NULL)
     {
         p101_memcpy(env, copy, text, length + 1U);
@@ -54,22 +56,33 @@ bool p101_c_facts_with_compile_command(const struct p101_env *env, struct p101_e
     unsigned                    command_count;
     bool                        found;
     bool                        result;
+    char                       *real_path;
+    size_t                      database_length;
+    bool                        error_present;
+    bool                        no_error;
 
     P101_TRACE_SCOPE(env);
     P101_WRAPPER_FAULT_SCOPE_RETURN(env, err, result, false);
-    if(compile_database == NULL || source_path == NULL || observer == NULL || p101_realpath(env, err, source_path, canonical_source) == NULL)
+    real_path = NULL;
+    if(compile_database != NULL && source_path != NULL && observer != NULL)
+    {
+        real_path = p101_realpath(env, err, source_path, canonical_source);
+    }
+    if(real_path == NULL)
     {
         p101_single_result_ = false;
         goto p101_single_exit_;
     }
-    if(p101_strlen(env, compile_database) >= sizeof(database_directory))
+    database_length = p101_strlen(env, compile_database);
+    if(database_length >= sizeof(database_directory))
     {
         P101_ERROR_RAISE_USER(err, "The compilation-database path is too long.", 1);
         p101_single_result_ = false;
         goto p101_single_exit_;
     }
     p101_snprintf(env, err, database_directory, sizeof(database_directory), "%s", compile_database);
-    if(p101_error_has_error(err))
+    error_present = p101_error_has_error(err);
+    if(error_present)
     {
         p101_single_result_ = false;
         goto p101_single_exit_;
@@ -99,29 +112,55 @@ bool p101_c_facts_with_compile_command(const struct p101_env *env, struct p101_e
     for(command_index = 0U; command_index < command_count && !found; command_index++)
     {
         CXCompileCommand command;
+        CXString         cx_filename;
         char            *filename;
         char             canonical_filename[COMPILE_COMMAND_PATH_SIZE];
+        char            *canonical_result;
+        int              path_comparison;
 
-        command  = clang_CompileCommands_getCommand(commands, command_index);
-        filename = copy_cx_string(env, err, clang_CompileCommand_getFilename(command));
-        /* P101_ERROR_CONTRACT_ALLOW_NO_ERROR: an absent entry is not a match. */
-        if(filename != NULL && p101_realpath(env, NULL, filename, canonical_filename) != NULL && p101_strcmp(env, canonical_filename, canonical_source) == 0)
+        command     = clang_CompileCommands_getCommand(commands, command_index);
+        cx_filename = clang_CompileCommand_getFilename(command);
+        filename    = copy_cx_string(env, err, cx_filename);
+        /* P101_ERROR_OPTIONAL rationale: an absent entry is not a match. */
+        canonical_result = NULL;
+        path_comparison  = -1;
+        if(filename != NULL)
+        {
+            canonical_result = p101_realpath(env, P101_ERROR_OPTIONAL, filename, canonical_filename);
+        }
+        if(canonical_result != NULL)
+        {
+            path_comparison = p101_strcmp(env, canonical_filename, canonical_source);
+        }
+        if(filename != NULL && canonical_result != NULL && path_comparison == 0)
         {
             struct p101_c_compile_command view;
             char                        **arguments;
             char                         *directory;
             unsigned                      argument_index;
             unsigned                      argument_count;
+            CXString                      cx_directory;
+            CXString                      cx_argument;
 
             found          = true;
-            directory      = copy_cx_string(env, err, clang_CompileCommand_getDirectory(command));
+            cx_directory   = clang_CompileCommand_getDirectory(command);
+            directory      = copy_cx_string(env, err, cx_directory);
             argument_count = clang_CompileCommand_getNumArgs(command);
-            arguments      = (char **)p101_calloc(env, err, argument_count, sizeof(*arguments));
-            for(argument_index = 0U; arguments != NULL && argument_index < argument_count && p101_error_has_no_error(err); argument_index++)
             {
-                arguments[argument_index] = copy_cx_string(env, err, clang_CompileCommand_getArg(command, argument_index));
+                void *storage;
+
+                storage   = p101_calloc(env, err, argument_count, sizeof(*arguments));
+                arguments = (char **)storage;
             }
-            if(arguments != NULL && directory != NULL && p101_error_has_no_error(err))
+            no_error = p101_error_has_no_error(err);
+            for(argument_index = 0U; arguments != NULL && argument_index < argument_count && no_error; argument_index++)
+            {
+                cx_argument               = clang_CompileCommand_getArg(command, argument_index);
+                arguments[argument_index] = copy_cx_string(env, err, cx_argument);
+                no_error                  = p101_error_has_no_error(err);
+            }
+            no_error = p101_error_has_no_error(err);
+            if(arguments != NULL && directory != NULL && no_error)
             {
                 view.directory      = directory;
                 view.arguments      = (const char *const *)arguments;
@@ -140,12 +179,14 @@ bool p101_c_facts_with_compile_command(const struct p101_env *env, struct p101_e
 
     clang_CompileCommands_dispose(commands);
     clang_CompilationDatabase_dispose(database);
-    if(!found && p101_error_has_no_error(err))
+    no_error = p101_error_has_no_error(err);
+    if(!found && no_error)
     {
         P101_ERROR_RAISE_USER(err, "The compilation database has no command for the mutation candidate.", 1);
     }
     P101_WRAPPER_SCOPE_DONE();
-    if(result && p101_error_has_no_error(err))
+    no_error = p101_error_has_no_error(err);
+    if(result && no_error)
     {
         p101_single_result_ = true;
         goto p101_single_exit_;

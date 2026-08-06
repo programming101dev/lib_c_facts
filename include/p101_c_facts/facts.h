@@ -8,7 +8,7 @@
 
 #define P101_C_FACT_TAG "P101FACT"
 #define P101_C_FACT_PREFIX "P101FACT\t"
-#define P101_C_FACT_VERSION "4"
+#define P101_C_FACT_VERSION "6"
 
 #ifdef __cplusplus
 extern "C"
@@ -45,10 +45,19 @@ extern "C"
         bool                  is_header;
         size_t                line;
         size_t                column;
+        size_t                start;
+        size_t                end;
         char                 *value;
         char                 *caller;
-        bool                  flag1;
-        bool                  flag2;
+        char                 *usr;
+        char                 *caller_usr;
+        bool                  is_local;
+        bool                  is_static;
+        bool                  is_declaration;
+        bool                  is_definition;
+        bool                  has_env_parameter;
+        bool                  has_error_parameter;
+        bool                  is_indirect;
     };
 
     enum p101_c_fact_status p101_c_fact_parse_line(const struct p101_env *env, struct p101_error *err, char *line, struct p101_c_fact *fact);

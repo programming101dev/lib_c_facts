@@ -1,9 +1,9 @@
-function	test_kind	test_source
-p101_c_analysis_scan	fault	test/test_fault_wrappers.c
-p101_c_fact_parse_line	fault	test/test_fault_wrappers.c
-p101_c_facts_find_clang_compile_database	fault	test/test_fault_wrappers.c
-p101_c_facts_with_compile_command	fault	test/test_fault_wrappers.c
-p101_c_analysis_kind_name	behavior-existing	test/test_analysis.c
-p101_c_fact_kind_name	behavior-existing	test/test_facts.c
-p101_c_fact_status_name	behavior-existing	test/test_facts.c
-p101_c_mutation_kind_name	behavior-existing	test/test_analysis.c
+function	function_usr	test_kind	test_source
+p101_c_analysis_scan	c:@F@p101_c_analysis_scan	fault	test/test_fault_wrappers.c
+p101_c_fact_parse_line	c:@F@p101_c_fact_parse_line	fault	test/test_fault_wrappers.c
+p101_c_facts_find_clang_compile_database	c:@F@p101_c_facts_find_clang_compile_database	fault	test/test_fault_wrappers.c
+p101_c_facts_with_compile_command	c:@F@p101_c_facts_with_compile_command	fault	test/test_fault_wrappers.c
+p101_c_analysis_kind_name	c:@F@p101_c_analysis_kind_name	behavior-existing	test/test_analysis.c
+p101_c_fact_kind_name	c:@F@p101_c_fact_kind_name	behavior-existing	test/test_facts.c
+p101_c_fact_status_name	c:@F@p101_c_fact_status_name	behavior-existing	test/test_facts.c
+p101_c_mutation_kind_name	c:@F@p101_c_mutation_kind_name	behavior-existing	test/test_analysis.c

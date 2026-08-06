@@ -80,7 +80,7 @@ static int inject_selected_fault(const struct p101_env *fault_env, const char *c
 
 static void test_parse_function_fact(void)
 {
-    char                    line[] = "P101FACT\t4\tFUNCTION\t/tmp/demo.c\tdemo\t0\t42\thelper\t1\t0\n";
+    char                    line[] = "P101FACT\t6\tFUNCTION\t/tmp/demo.c\tdemo\t0\t42\thelper\t1\t0\tc:@F@helper\t100\t200\n";
     struct p101_c_fact      fact;
     enum p101_c_fact_status status;
 
@@ -93,37 +93,43 @@ static void test_parse_function_fact(void)
     TEST_ASSERT_FALSE(fact.is_header);
     TEST_ASSERT_EQUAL_UINT64(42U, fact.line);
     TEST_ASSERT_EQUAL_STRING("helper", fact.value);
-    TEST_ASSERT_TRUE(fact.flag1);
-    TEST_ASSERT_FALSE(fact.flag2);
+    TEST_ASSERT_TRUE(fact.is_static);
+    TEST_ASSERT_FALSE(fact.is_declaration);
+    TEST_ASSERT_EQUAL_STRING("c:@F@helper", fact.usr);
+    TEST_ASSERT_EQUAL_UINT64(100U, fact.start);
+    TEST_ASSERT_EQUAL_UINT64(200U, fact.end);
 }
 
 static void test_parse_include_fact(void)
 {
-    char               line[] = "P101FACT\t4\tINCLUDE\t/tmp/demo.c\tdemo\t0\t7\tp101_c/p101_string.h\t0\n";
+    char               line[] = "P101FACT\t6\tINCLUDE\t/tmp/demo.c\tdemo\t0\t7\tp101_c/p101_string.h\t0\n";
     struct p101_c_fact fact;
 
     TEST_ASSERT_EQUAL_INT(P101_C_FACT_OK, parse(line, &fact));
     TEST_ASSERT_EQUAL_INT(P101_C_FACT_KIND_INCLUDE, fact.kind);
     TEST_ASSERT_EQUAL_STRING("p101_c/p101_string.h", fact.value);
-    TEST_ASSERT_FALSE(fact.flag1);
+    TEST_ASSERT_FALSE(fact.is_local);
 }
 
 static void test_unescapes_fields(void)
 {
-    char               line[] = "P101FACT\t4\tCALL\t/tmp/a\\\\b.c\tm\t0\t3\tthing\\tname\t1\t1\tcaller\\tname\n";
+    char               line[] = "P101FACT\t6\tCALL\t/tmp/a\\\\b.c\tm\t0\t3\tthing\\tname\t1\t1\t1\tcaller\\tname\tcallee-usr\tcaller-usr\t20\t30\n";
     struct p101_c_fact fact;
 
     TEST_ASSERT_EQUAL_INT(P101_C_FACT_OK, parse(line, &fact));
     TEST_ASSERT_EQUAL_STRING("/tmp/a\\b.c", fact.path);
     TEST_ASSERT_EQUAL_STRING("thing\tname", fact.value);
     TEST_ASSERT_EQUAL_STRING("caller\tname", fact.caller);
-    TEST_ASSERT_TRUE(fact.flag1);
-    TEST_ASSERT_TRUE(fact.flag2);
+    TEST_ASSERT_EQUAL_STRING("callee-usr", fact.usr);
+    TEST_ASSERT_EQUAL_STRING("caller-usr", fact.caller_usr);
+    TEST_ASSERT_TRUE(fact.has_env_parameter);
+    TEST_ASSERT_TRUE(fact.has_error_parameter);
+    TEST_ASSERT_TRUE(fact.is_indirect);
 }
 
 static void test_parse_note_caller_and_column(void)
 {
-    char               line[] = "P101FACT\t4\tNOTE\t/tmp/demo.c\tdemo\t0\t9\tFUNCTION_RETURN\thelper\t17\n";
+    char               line[] = "P101FACT\t6\tNOTE\t/tmp/demo.c\tdemo\t0\t9\tFUNCTION_RETURN\thelper\t17\tc:@F@helper\t40\t50\n";
     struct p101_c_fact fact;
 
     TEST_ASSERT_EQUAL_INT(P101_C_FACT_OK, parse(line, &fact));
@@ -131,23 +137,27 @@ static void test_parse_note_caller_and_column(void)
     TEST_ASSERT_EQUAL_STRING("FUNCTION_RETURN", fact.value);
     TEST_ASSERT_EQUAL_STRING("helper", fact.caller);
     TEST_ASSERT_EQUAL_UINT64(17U, fact.column);
+    TEST_ASSERT_EQUAL_STRING("c:@F@helper", fact.caller_usr);
 }
 
 static void test_parse_enum_facts(void)
 {
-    char               enum_line[]       = "P101FACT\t4\tENUM\t/tmp/demo.h\tdemo\t1\t9\tp101_result\n";
-    char               enumerator_line[] = "P101FACT\t4\tENUMERATOR\t/tmp/demo.h\tdemo\t1\t10\tP101_RESULT_OK\tp101_result\n";
+    char               enum_line[]       = "P101FACT\t6\tENUM\t/tmp/demo.h\tdemo\t1\t9\tp101_result\tc:@E@p101_result\n";
+    char               enumerator_line[] = "P101FACT\t6\tENUMERATOR\t/tmp/demo.h\tdemo\t1\t10\tP101_RESULT_OK\tp101_result\tc:@E@p101_result@P101_RESULT_OK\tc:@E@p101_result\n";
     struct p101_c_fact fact;
 
     TEST_ASSERT_EQUAL_INT(P101_C_FACT_OK, parse(enum_line, &fact));
     TEST_ASSERT_EQUAL_INT(P101_C_FACT_KIND_ENUM, fact.kind);
     TEST_ASSERT_EQUAL_STRING("p101_result", fact.value);
+    TEST_ASSERT_EQUAL_STRING("c:@E@p101_result", fact.usr);
     TEST_ASSERT_NULL(fact.caller);
 
     TEST_ASSERT_EQUAL_INT(P101_C_FACT_OK, parse(enumerator_line, &fact));
     TEST_ASSERT_EQUAL_INT(P101_C_FACT_KIND_ENUMERATOR, fact.kind);
     TEST_ASSERT_EQUAL_STRING("P101_RESULT_OK", fact.value);
     TEST_ASSERT_EQUAL_STRING("p101_result", fact.caller);
+    TEST_ASSERT_EQUAL_STRING("c:@E@p101_result@P101_RESULT_OK", fact.usr);
+    TEST_ASSERT_EQUAL_STRING("c:@E@p101_result", fact.caller_usr);
 }
 
 static void test_non_fact_line_is_other(void)
@@ -168,7 +178,7 @@ static void test_bad_version_is_reported(void)
 
 static void test_malformed_fact_is_reported(void)
 {
-    char               line[] = "P101FACT\t4\tFUNCTION\t/tmp/demo.c\tdemo\t0\tline\thelper\t1\t0\n";
+    char               line[] = "P101FACT\t6\tFUNCTION\t/tmp/demo.c\tdemo\t0\tline\thelper\t1\t0\n";
     struct p101_c_fact fact;
 
     TEST_ASSERT_EQUAL_INT(P101_C_FACT_MALFORMED, parse(line, &fact));
@@ -176,7 +186,7 @@ static void test_malformed_fact_is_reported(void)
 
 static void test_non_boolean_flag_is_malformed(void)
 {
-    char               line[] = "P101FACT\t4\tFUNCTION\t/tmp/demo.c\tdemo\t2\t4\thelper\t1\t0\n";
+    char               line[] = "P101FACT\t6\tFUNCTION\t/tmp/demo.c\tdemo\t2\t4\thelper\t1\t0\n";
     struct p101_c_fact fact;
 
     TEST_ASSERT_EQUAL_INT(P101_C_FACT_MALFORMED, parse(line, &fact));
@@ -185,16 +195,16 @@ static void test_non_boolean_flag_is_malformed(void)
 static void test_parse_all_fact_kinds_and_names(void)
 {
     static const char *const lines[] = {
-        "P101FACT\t4\tFILE\t/tmp/demo.c\tdemo\t0\t1\r",
-        "P101FACT\t4\tINCLUDE\t/tmp/demo.c\tdemo\t1\t2\tstdio.h\t1\n",
-        "P101FACT\t4\tFUNCTION\t/tmp/demo.c\tdemo\t0\t3\tmain\t0\t1\n",
-        "P101FACT\t4\tCALL\t/tmp/demo.c\tdemo\t0\t4\tputs\t1\t0\tmain\n",
-        "P101FACT\t4\tTYPE\t/tmp/demo.c\tdemo\t0\t5\twidget\n",
-        "P101FACT\t4\tENUM\t/tmp/demo.c\tdemo\t0\t6\tresult\n",
-        "P101FACT\t4\tENUMERATOR\t/tmp/demo.c\tdemo\t0\t7\tRESULT_OK\tresult\n",
-        "P101FACT\t4\tMACRO\t/tmp/demo.c\tdemo\t0\t8\tLIMIT\n",
-        "P101FACT\t4\tNOTE\t/tmp/demo.c\tdemo\t0\t9\tadvice\tmain\t11\n",
-        "P101FACT\t4\tNOT-A-KIND\t/tmp/demo.c\tdemo\t0\t10\n",
+        "P101FACT\t6\tFILE\t/tmp/demo.c\tdemo\t0\t1\r",
+        "P101FACT\t6\tINCLUDE\t/tmp/demo.c\tdemo\t1\t2\tstdio.h\t1\n",
+        "P101FACT\t6\tFUNCTION\t/tmp/demo.c\tdemo\t0\t3\tmain\t0\t1\tc:@F@main\t0\t0\n",
+        "P101FACT\t6\tCALL\t/tmp/demo.c\tdemo\t0\t4\tputs\t1\t0\t0\tmain\tc:@F@puts\tc:@F@main\t0\t0\n",
+        "P101FACT\t6\tTYPE\t/tmp/demo.c\tdemo\t0\t5\twidget\tc:@S@widget\n",
+        "P101FACT\t6\tENUM\t/tmp/demo.c\tdemo\t0\t6\tresult\tc:@E@result\n",
+        "P101FACT\t6\tENUMERATOR\t/tmp/demo.c\tdemo\t0\t7\tRESULT_OK\tresult\tc:@E@result@RESULT_OK\tc:@E@result\n",
+        "P101FACT\t6\tMACRO\t/tmp/demo.c\tdemo\t0\t8\tLIMIT\t1\t\t0\t0\n",
+        "P101FACT\t6\tNOTE\t/tmp/demo.c\tdemo\t0\t9\tadvice\tmain\t11\tc:@F@main\t0\t0\n",
+        "P101FACT\t6\tNOT-A-KIND\t/tmp/demo.c\tdemo\t0\t10\n",
     };
 
     static const enum p101_c_fact_kind kinds[] = {
@@ -214,7 +224,7 @@ static void test_parse_all_fact_kinds_and_names(void)
 
     for(size_t index = 0U; index < sizeof(lines) / sizeof(lines[0]); index++)
     {
-        char               line[160];
+        char               line[512];
         struct p101_c_fact fact;
 
         (void)snprintf(line, sizeof(line), "%s", lines[index]);
@@ -237,21 +247,22 @@ static void test_status_names_are_stable(void)
 static void test_rejects_invalid_fact_shapes(void)
 {
     static const char *const malformed[] = {
-        "P101FACT\t4\n",
-        "P101FACT\t4\tFILE\t/tmp/demo.c\tdemo\t0\tnot-a-line\n",
-        "P101FACT\t4\tFILE\t/tmp/demo.c\tdemo\tmaybe\t1\n",
-        "P101FACT\t4\tINCLUDE\t/tmp/demo.c\tdemo\t0\t1\tstdio.h\n",
-        "P101FACT\t4\tFUNCTION\t/tmp/demo.c\tdemo\t0\t1\tmain\t1\n",
-        "P101FACT\t4\tCALL\t/tmp/demo.c\tdemo\t0\t1\tputs\t1\n",
-        "P101FACT\t4\tTYPE\t/tmp/demo.c\tdemo\t0\t1\n",
-        "P101FACT\t4\tMACRO\t/tmp/demo.c\tdemo\t0\t1\n",
-        "P101FACT\t4\tNOTE\t/tmp/demo.c\tdemo\t0\t1\n",
-        "P101FACT\t4\tFUNCTION\t/tmp/demo.c\tdemo\t0\t1\tmain\tbad\t0\n",
-        "P101FACT\t4\tFUNCTION\t/tmp/demo.c\tdemo\t0\t1\tmain\t1\tbad\n",
-        "P101FACT\t4\tFILE\t/tmp/demo.c\tdemo\t0\t1\ta\tb\tc\td\te\tf\tg\th\ti\tj\n",
+        "P101FACT\t6\n",
+        "P101FACT\t6\tFILE\t/tmp/demo.c\tdemo\t0\tnot-a-line\n",
+        "P101FACT\t6\tFILE\t/tmp/demo.c\tdemo\tmaybe\t1\n",
+        "P101FACT\t6\tINCLUDE\t/tmp/demo.c\tdemo\t0\t1\tstdio.h\n",
+        "P101FACT\t6\tFUNCTION\t/tmp/demo.c\tdemo\t0\t1\tmain\t1\n",
+        "P101FACT\t6\tCALL\t/tmp/demo.c\tdemo\t0\t1\tputs\t1\n",
+        "P101FACT\t6\tCALL\t/tmp/demo.c\tdemo\t0\t1\tputs\t0\t0\tbad\tmain\tc:@F@puts\tc:@F@main\t0\t0\n",
+        "P101FACT\t6\tTYPE\t/tmp/demo.c\tdemo\t0\t1\n",
+        "P101FACT\t6\tMACRO\t/tmp/demo.c\tdemo\t0\t1\n",
+        "P101FACT\t6\tNOTE\t/tmp/demo.c\tdemo\t0\t1\n",
+        "P101FACT\t6\tFUNCTION\t/tmp/demo.c\tdemo\t0\t1\tmain\tbad\t0\n",
+        "P101FACT\t6\tFUNCTION\t/tmp/demo.c\tdemo\t0\t1\tmain\t1\tbad\n",
+        "P101FACT\t6\tFILE\t/tmp/demo.c\tdemo\t0\t1\ta\tb\tc\td\te\tf\tg\th\ti\tj\n",
     };
     struct p101_c_fact fact;
-    char               valid[] = "P101FACT\t4\tFILE\t/tmp/demo.c\tdemo\t0\t1\n";
+    char               valid[] = "P101FACT\t6\tFILE\t/tmp/demo.c\tdemo\t0\t1\n";
 
     TEST_ASSERT_EQUAL_INT(P101_C_FACT_MALFORMED, p101_c_fact_parse_line(env, error, NULL, &fact));
     TEST_ASSERT_EQUAL_INT(P101_C_FACT_MALFORMED, p101_c_fact_parse_line(env, error, valid, NULL));
@@ -264,9 +275,9 @@ static void test_rejects_invalid_fact_shapes(void)
     }
 
     {
-        char maximum_fields[] = "P101FACT\t4\tUNKNOWN\t/tmp/demo.c\tdemo\t0\t1\tvalue\t0\t1\ta\tb\tc\td\te\tf\n";
+        char maximum_fields[] = "P101FACT\t6\tUNKNOWN\t/tmp/demo.c\tdemo\t0\t1\tvalue\t0\t1\ta\tb\tc\td\te\tf\n";
 
-        TEST_ASSERT_EQUAL_INT(P101_C_FACT_OK, parse(maximum_fields, &fact));
+        TEST_ASSERT_EQUAL_INT(P101_C_FACT_MALFORMED, parse(maximum_fields, &fact));
     }
 }
 

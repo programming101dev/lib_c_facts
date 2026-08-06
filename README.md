@@ -13,36 +13,54 @@ round-trip.
 ## Record format
 
 ```text
-P101FACT<TAB>4<TAB>kind<TAB>path<TAB>module<TAB>is_header<TAB>line...
+P101FACT<TAB>6<TAB>kind<TAB>path<TAB>module<TAB>is_header<TAB>line...
 ```
 
-The current version is `4`. Extra fields depend on `kind`:
+The current and only accepted version is `6`. Extra fields depend on `kind`:
 
 | Kind | Extra fields |
 | --- | --- |
 | `FILE` | none |
 | `INCLUDE` | `target`, `is_local` |
-| `FUNCTION` | `name`, `is_static`, `is_header_declaration` |
-| `CALL` | `name`, `needs_env`, `needs_error`, `caller` |
-| `TYPE` | `name` |
-| `ENUM` | `name` |
-| `ENUMERATOR` | `name`, `enum_type` |
-| `MACRO` | `name` |
-| `NOTE` | `name`, `caller`, `column` |
+| `FUNCTION` | `name`, `is_static`, `is_header_declaration`, `usr`, `start`, `end` |
+| `CALL` | `name`, `needs_env`, `needs_error`, `is_indirect`, `caller`, `usr`, `caller_usr`, `start`, `end` |
+| `TYPE` | `name`, `usr` |
+| `ENUM` | `name`, `usr` |
+| `ENUMERATOR` | `name`, `enum_type`, `usr`, `enum_usr` |
+| `MACRO` | `name`, `is_definition`, `caller_usr`, `start`, `end` |
+| `NOTE` | `name`, `caller`, `column`, `caller_usr`, `start`, `end` |
 
 Variable fields escape backslash, tab, newline, and carriage return as `\\`,
 `\t`, `\n`, and `\r`.
 
 Known `NOTE` values include `ENV_CONTRACT`, `ERROR_CONTRACT`, `ENV_USE`,
-`ERROR_USE`, `TRACE_USE`, `ERROR_CHECK`, `ERROR_OPTIONAL`, `ERROR_DISCARD`,
-`ERROR_PROPAGATED`, `ERROR_UNCHECKED_CHAIN`, and `FUNCTION_RETURN`. Consumers
+`ERROR_USE`, `TYPE_SEMANTIC_ROLE:<role>`, `ERROR_CHECK`, `ERROR_OPTIONAL`, `ERROR_DISCARD`,
+`ERROR_PROPAGATED`, `ERROR_UNCHECKED_CHAIN`, `FUNCTION_RETURN`,
+`FUNCTION_EARLY_RETURN`, `SEMANTIC_ROLE:<role>`,
+`FUNCTION_REFERENCE:<function-usr>`, and
+`CALLEE_SEMANTIC_ROLE:<role>`. The latter is emitted at a call site from the
+AST-resolved declaration's annotation, so consumers do not have to infer a
+callee's purpose from its spelling. Consumers
 should ignore note values they do not understand.
 
+`FUNCTION_REFERENCE` records a resolved function declaration used as a value,
+including callback and test-runner registration. This lets policy distinguish
+an unwired function from one registered through a macro without matching
+variable or function names.
+
+Indirect-call records use the declaration identity of the function-pointer
+type when one exists. This lets policy describe a callback by its actual type,
+not by the local variable or structure-member name used at one call site.
+`CALL_RESULT_DISCARDED` identifies a call expression whose value is an
+expression statement or is explicitly converted to `void`.
+
 The two `CALL` flags are derived from the resolved callee declaration in
-Clang's AST. `CALL` and `NOTE` records preserve the enclosing function across
-replay. Together they let policy tools reason from the actual wrapper
-signature and enforce caller-sensitive rules without maintaining private name
-lists.
+Clang's AST. Declaration USRs, canonical record types, semantic-role
+attributes, enclosing-function identities, and source extents are the policy
+evidence. Display names remain in the format for people, but consumers must
+not use them as a substitute for declaration identity. Macro spelling is
+retained because a macro has no runtime function identity; its AST kind,
+expansion extent, and enclosing function distinguish it from text search.
 
 ## Ownership and compatibility
 

@@ -33,12 +33,14 @@ static bool is_clang_build_directory(const struct p101_env *env, const char *pat
     const char       *base_name;
     const char       *separator;
     bool              ret_val;
+    int               comparison;
 
     P101_TRACE(env);
-    separator = p101_strrchr(env, path, '/');
-    base_name = (separator == NULL) ? path : separator + 1;
-    ret_val   = false;
-    if(p101_strncmp(env, base_name, prefix, sizeof(prefix) - 1U) == 0 && (base_name[sizeof(prefix) - 1U] == '\0' || base_name[sizeof(prefix) - 1U] == '-'))
+    separator  = p101_strrchr(env, path, '/');
+    base_name  = (separator == NULL) ? path : separator + 1;
+    ret_val    = false;
+    comparison = p101_strncmp(env, base_name, prefix, sizeof(prefix) - 1U);
+    if(comparison == 0 && (base_name[sizeof(prefix) - 1U] == '\0' || base_name[sizeof(prefix) - 1U] == '-'))
     {
         ret_val = true;
     }
@@ -49,10 +51,12 @@ static bool is_clang_build_directory(const struct p101_env *env, const char *pat
 static bool readable_file(const struct p101_env *env, const char *path)
 {
     bool ret_val;
+    int  access_status;
 
     P101_TRACE(env);
-    /* P101_ERROR_CONTRACT_ALLOW_NO_ERROR: access failure means unavailable. */
-    ret_val = p101_access(env, NULL, path, R_OK) == 0;
+    /* P101_ERROR_OPTIONAL rationale: access failure means unavailable. */
+    access_status = p101_access(env, P101_ERROR_OPTIONAL, path, R_OK);
+    ret_val       = access_status == 0;
     P101_TRACE_EXIT(env);
     return ret_val;
 }
@@ -64,6 +68,10 @@ bool p101_c_facts_find_clang_compile_database(const struct p101_env *env, struct
     const char *build_line;
     FILE       *stream;
     bool        found;
+    bool        readable;
+    bool        clang_build;
+    bool        error_present;
+    bool        no_error;
 
     P101_TRACE(env);
     P101_WRAPPER_FAULT_RETURN(env, err, found, false);
@@ -76,29 +84,33 @@ bool p101_c_facts_find_clang_compile_database(const struct p101_env *env, struct
 
     path[0] = '\0';
     p101_snprintf(env, err, last_build_path, sizeof(last_build_path), "%s/.last-build-dir", project_directory);
-    if(p101_error_has_error(err))
+    error_present = p101_error_has_error(err);
+    if(error_present)
     {
         goto done;
     }
 
-    if(readable_file(env, last_build_path))
+    readable = readable_file(env, last_build_path);
+    if(readable)
     {
         stream = p101_fopen(env, err, last_build_path, "r");
         if(stream == NULL)
         {
             goto done;
         }
-        build_line = p101_fgets(env, err, build_directory, sizeof(build_directory), stream);
-        if(p101_error_has_error(err))
+        build_line    = p101_fgets(env, err, build_directory, sizeof(build_directory), stream);
+        error_present = p101_error_has_error(err);
+        if(error_present)
         {
-            /* P101_ERROR_CONTRACT_ALLOW_NO_ERROR: preserve the read error while closing the temporary stream. */
-            p101_fclose(env, NULL, stream);
+            /* P101_ERROR_OPTIONAL rationale: preserve the read error while closing the temporary stream. */
+            p101_fclose(env, P101_ERROR_OPTIONAL, stream);
             goto done;
         }
         if(build_line != NULL)
         {
             trim_line_ending(env, build_directory);
-            if(is_clang_build_directory(env, build_directory))
+            clang_build = is_clang_build_directory(env, build_directory);
+            if(clang_build)
             {
                 if(build_directory[0] == '/')
                 {
@@ -108,24 +120,37 @@ bool p101_c_facts_find_clang_compile_database(const struct p101_env *env, struct
                 {
                     p101_snprintf(env, err, path, path_size, "%s/%s/compile_commands.json", project_directory, build_directory);
                 }
-                found = (p101_error_has_no_error(err) && readable_file(env, path)) != 0;
+                no_error = p101_error_has_no_error(err);
+                readable = false;
+                if(no_error)
+                {
+                    readable = readable_file(env, path);
+                }
+                found = false;
+                if(no_error && readable)
+                {
+                    found = true;
+                }
             }
         }
-        if(p101_error_has_error(err))
+        error_present = p101_error_has_error(err);
+        if(error_present)
         {
-            /* P101_ERROR_CONTRACT_ALLOW_NO_ERROR: preserve the discovery error while closing the temporary stream. */
-            p101_fclose(env, NULL, stream);
+            /* P101_ERROR_OPTIONAL rationale: preserve the discovery error while closing the temporary stream. */
+            p101_fclose(env, P101_ERROR_OPTIONAL, stream);
             goto done;
         }
         p101_fclose(env, err, stream);
-        if(p101_error_has_error(err) || found)
+        error_present = p101_error_has_error(err);
+        if(error_present || found)
         {
             goto done;
         }
     }
 
     p101_snprintf(env, err, path, path_size, "%s/build-clang/compile_commands.json", project_directory);
-    if(p101_error_has_no_error(err))
+    no_error = p101_error_has_no_error(err);
+    if(no_error)
     {
         found = readable_file(env, path);
     }

@@ -33,7 +33,7 @@ extern "C"
         P101_C_MUTATION_LOGICAL_CONNECTIVE,
         P101_C_MUTATION_ARITHMETIC_OPERATOR,
         P101_C_MUTATION_ERROR_PREDICATE,
-        P101_C_MUTATION_SKIP_CLEANUP
+        P101_C_MUTATION_SKIP_CALL
     };
 
     struct p101_c_analysis_record
@@ -46,9 +46,11 @@ extern "C"
         size_t                    end_offset;
         const char               *name;
         const char               *caller;
+        const char               *usr;
+        const char               *caller_usr;
         const char               *type;
         const char               *return_type;
-        const char               *error_argument;
+        const char               *error_argument_identity;
         const char               *replacement;
         enum p101_c_mutation_kind mutation;
         bool                      is_header;
@@ -59,6 +61,7 @@ extern "C"
         bool                      is_local_include;
         bool                      has_env_parameter;
         bool                      has_error_parameter;
+        bool                      is_error_state_query;
         bool                      is_indirect;
     };
 

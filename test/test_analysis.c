@@ -24,14 +24,22 @@ struct analysis_counts
     size_t mutations;
     size_t diagnostics;
     size_t error_discards;
+    size_t call_results_not_isolated;
     bool   saw_error_contract;
+    bool   saw_context_env_contract;
+    bool   saw_context_error_contract;
+    bool   saw_callback_env_contract;
+    bool   saw_callback_error_contract;
     bool   saw_error_check;
     bool   saw_error_discard;
     bool   saw_error_optional;
     bool   saw_error_propagated;
     bool   saw_unchecked_chain;
     bool   saw_function_return;
+    bool   saw_function_early_return;
+    bool   saw_labeled_function_early_return;
     bool   saw_function_return_caller;
+    bool   saw_semantic_role;
     bool   saw_enum;
     bool   saw_enumerator;
     bool   saw_trace;
@@ -46,6 +54,9 @@ struct analysis_counts
     bool   saw_macro_expansion_extent;
     bool   saw_indirect;
     bool   saw_variadic;
+    bool   saw_annotated_error_query;
+    bool   saw_non_query_error_reader;
+    bool   saw_function_reference;
     bool   stop;
     bool   stop_on_call;
 };
@@ -101,23 +112,43 @@ static bool count_record(const struct p101_env *callback_env, struct p101_error 
     {
         counts->calls++;
         counts->saw_indirect = counts->saw_indirect || record->is_indirect;
+        if(strcmp(record->name, "p101_error_has_error") == 0)
+        {
+            counts->saw_annotated_error_query = counts->saw_annotated_error_query || record->is_error_state_query;
+        }
+        if(strcmp(record->name, "p101_error_is_reporting") == 0)
+        {
+            counts->saw_non_query_error_reader = counts->saw_non_query_error_reader || !record->is_error_state_query;
+        }
     }
     else if(record->kind == P101_C_ANALYSIS_NOTE)
     {
         counts->notes++;
-        counts->saw_error_contract = counts->saw_error_contract || strcmp(record->name, "ERROR_CONTRACT") == 0;
-        counts->saw_error_check    = counts->saw_error_check || strcmp(record->name, "ERROR_CHECK") == 0;
-        counts->saw_error_discard  = counts->saw_error_discard || strcmp(record->name, "ERROR_DISCARD") == 0;
+        counts->saw_error_contract          = counts->saw_error_contract || strcmp(record->name, "ERROR_CONTRACT") == 0;
+        counts->saw_context_env_contract    = counts->saw_context_env_contract || (strcmp(record->name, "ENV_CONTRACT") == 0 && record->caller != NULL && strcmp(record->caller, "contextual") == 0);
+        counts->saw_context_error_contract  = counts->saw_context_error_contract || (strcmp(record->name, "ERROR_CONTRACT") == 0 && record->caller != NULL && strcmp(record->caller, "contextual") == 0);
+        counts->saw_callback_env_contract   = counts->saw_callback_env_contract || (strcmp(record->name, "ENV_CONTRACT") == 0 && record->caller != NULL && strcmp(record->caller, "semantic_callback") == 0);
+        counts->saw_callback_error_contract = counts->saw_callback_error_contract || (strcmp(record->name, "ERROR_CONTRACT") == 0 && record->caller != NULL && strcmp(record->caller, "semantic_callback") == 0);
+        counts->saw_error_check             = counts->saw_error_check || strcmp(record->name, "ERROR_CHECK") == 0;
+        counts->saw_error_discard           = counts->saw_error_discard || strcmp(record->name, "ERROR_DISCARD") == 0;
+        if(strcmp(record->name, "CALL_NOT_ISOLATED") == 0)
+        {
+            counts->call_results_not_isolated++;
+        }
         if(strcmp(record->name, "ERROR_DISCARD") == 0)
         {
             counts->error_discards++;
         }
-        counts->saw_error_optional         = counts->saw_error_optional || strcmp(record->name, "ERROR_OPTIONAL") == 0;
-        counts->saw_error_propagated       = counts->saw_error_propagated || strcmp(record->name, "ERROR_PROPAGATED") == 0;
-        counts->saw_unchecked_chain        = counts->saw_unchecked_chain || strcmp(record->name, "ERROR_UNCHECKED_CHAIN") == 0;
-        counts->saw_function_return        = counts->saw_function_return || strcmp(record->name, "FUNCTION_RETURN") == 0;
-        counts->saw_function_return_caller = counts->saw_function_return_caller || (strcmp(record->name, "FUNCTION_RETURN") == 0 && record->caller != NULL && record->caller[0] != '\0');
-        counts->saw_trace                  = counts->saw_trace || strcmp(record->name, "TRACE_USE") == 0;
+        counts->saw_error_optional                = counts->saw_error_optional || strcmp(record->name, "ERROR_OPTIONAL") == 0;
+        counts->saw_error_propagated              = counts->saw_error_propagated || strcmp(record->name, "ERROR_PROPAGATED") == 0;
+        counts->saw_unchecked_chain               = counts->saw_unchecked_chain || strcmp(record->name, "ERROR_UNCHECKED_CHAIN") == 0;
+        counts->saw_function_return               = counts->saw_function_return || strcmp(record->name, "FUNCTION_RETURN") == 0;
+        counts->saw_function_early_return         = counts->saw_function_early_return || strcmp(record->name, "FUNCTION_EARLY_RETURN") == 0;
+        counts->saw_labeled_function_early_return = counts->saw_labeled_function_early_return || (strcmp(record->name, "FUNCTION_EARLY_RETURN") == 0 && record->caller != NULL && strcmp(record->caller, "labeled_return") == 0);
+        counts->saw_function_return_caller        = counts->saw_function_return_caller || (strcmp(record->name, "FUNCTION_RETURN") == 0 && record->caller != NULL && record->caller[0] != '\0');
+        counts->saw_semantic_role                 = counts->saw_semantic_role || strcmp(record->name, "SEMANTIC_ROLE:p101:test-role") == 0;
+        counts->saw_trace                         = counts->saw_trace || strcmp(record->name, "TYPE_SEMANTIC_ROLE:p101:trace-scope") == 0;
+        counts->saw_function_reference            = counts->saw_function_reference || strncmp(record->name, "FUNCTION_REFERENCE:", sizeof("FUNCTION_REFERENCE:") - 1U) == 0;
     }
     else if(record->kind == P101_C_ANALYSIS_MUTATION)
     {
@@ -207,6 +238,8 @@ static int fail_selected_call(const struct p101_env *callback_env, const char *c
     return 0;
 }
 
+P101_ATTR_SEMANTIC_ROLE("p101:boundary-case:boundary:c-fact-analysis:clean")
+
 static void test_analysis_and_compile_command(void)
 {
     char                           directory[PATH_SIZE];
@@ -232,14 +265,18 @@ static void test_analysis_and_compile_command(void)
                "#error split semantic compile-database define was discarded\n"
                "#endif\n"
                "struct p101_env; struct p101_error;\n"
+               "struct p101_error *p101_error_optional(void) __attribute__((annotate(\"p101:optional-error\")));\n"
+               "#define P101_ERROR_OPTIONAL p101_error_optional()\n"
                "typedef enum { SAMPLE_RESULT_OK, SAMPLE_RESULT_REFUSED } sample_result;\n"
-               "int p101_error_has_error(struct p101_error *err);\n"
+               "int p101_error_has_error(struct p101_error *err) __attribute__((annotate(\"p101:error-state-query\")));\n"
+               "int p101_error_is_reporting(const struct p101_error *err);\n"
                "int p101_first(const struct p101_env *env, struct p101_error *err);\n"
                "int p101_second(const struct p101_env *env, struct p101_error *err);\n"
                "const char *copy_text(struct p101_error *err, const char *value);\n"
                "#define COPY_VALUE(value) do { const char *copy = copy_text(err, (value)); if(copy == 0) return 0; } while(0)\n"
                "static int demo(const struct p101_env *env, struct p101_error *err) {\n"
                "  (void)env;\n"
+               "  (void)p101_error_is_reporting(err);\n"
                "  return p101_error_has_error(err) == 0;\n"
                "}\n"
                "static int chained(const struct p101_env *env, struct p101_error *err) {\n"
@@ -247,9 +284,15 @@ static void test_analysis_and_compile_command(void)
                "  return p101_second(env, err);\n"
                "}\n"
                "static int optional(const struct p101_env *env) {\n"
-               "  /* P101_ERROR_CONTRACT_ALLOW_NO_ERROR: absence is expected. */\n"
-               "  return p101_first(env, 0);\n"
+               "  /* P101_ERROR_OPTIONAL rationale: absence is expected. */\n"
+               "  return p101_first(env, P101_ERROR_OPTIONAL);\n"
                "}\n"
+               "static int discarded(const struct p101_env *env) {\n"
+               "  return p101_first(env, (struct p101_error *)0);\n"
+               "}\n"
+               "static int role_fn(void) __attribute__((annotate(\"p101:test-role\")));\n"
+               "static int role_fn(void) { return 0; }\n"
+               "static int labeled_return(int condition) { int result = 0; if(condition) { goto done; } done: return result; }\n"
                "static int macro_copy(struct p101_error *err, const char *value) {\n"
                "  COPY_VALUE(value);\n"
                "  return 1;\n"
@@ -279,7 +322,11 @@ static void test_analysis_and_compile_command(void)
     TEST_ASSERT_GREATER_THAN_UINT(0U, counts.functions);
     TEST_ASSERT_GREATER_THAN_UINT(0U, counts.calls);
     TEST_ASSERT_TRUE(counts.saw_function_return);
+    TEST_ASSERT_TRUE(counts.saw_function_early_return);
+    TEST_ASSERT_FALSE(counts.saw_labeled_function_early_return);
     TEST_ASSERT_TRUE(counts.saw_function_return_caller);
+    TEST_ASSERT_TRUE(counts.saw_semantic_role);
+    TEST_ASSERT_TRUE(counts.saw_function_reference);
     TEST_ASSERT_TRUE(counts.saw_enum);
     TEST_ASSERT_TRUE(counts.saw_enumerator);
     TEST_ASSERT_GREATER_THAN_UINT(0U, counts.notes);
@@ -287,6 +334,8 @@ static void test_analysis_and_compile_command(void)
     TEST_ASSERT_TRUE(counts.saw_error_contract);
     TEST_ASSERT_TRUE(counts.saw_function_extent);
     TEST_ASSERT_TRUE(counts.saw_error_check);
+    TEST_ASSERT_TRUE(counts.saw_annotated_error_query);
+    TEST_ASSERT_TRUE(counts.saw_non_query_error_reader);
     TEST_ASSERT_TRUE(counts.saw_error_optional);
     TEST_ASSERT_TRUE(counts.saw_error_discard);
     TEST_ASSERT_EQUAL_UINT(1U, counts.error_discards);
@@ -363,7 +412,7 @@ static void test_analysis_and_compile_command(void)
     TEST_ASSERT_EQUAL_STRING("logical-connective", p101_c_mutation_kind_name(P101_C_MUTATION_LOGICAL_CONNECTIVE));
     TEST_ASSERT_EQUAL_STRING("arithmetic-operator", p101_c_mutation_kind_name(P101_C_MUTATION_ARITHMETIC_OPERATOR));
     TEST_ASSERT_EQUAL_STRING("error-predicate", p101_c_mutation_kind_name(P101_C_MUTATION_ERROR_PREDICATE));
-    TEST_ASSERT_EQUAL_STRING("skip-cleanup", p101_c_mutation_kind_name(P101_C_MUTATION_SKIP_CLEANUP));
+    TEST_ASSERT_EQUAL_STRING("skip-call", p101_c_mutation_kind_name(P101_C_MUTATION_SKIP_CALL));
     TEST_ASSERT_EQUAL_STRING("unknown", p101_c_mutation_kind_name((enum p101_c_mutation_kind)99));
 
     TEST_ASSERT_EQUAL_INT(0, unlink(database));
@@ -411,12 +460,14 @@ static void test_wrapper_conformance_smoke(void)
     TEST_ASSERT_TRUE(p101_c_facts_with_compile_command(env, error, database, source, check_command, &command_called));
     TEST_ASSERT_TRUE(command_called);
     TEST_ASSERT_EQUAL_STRING("FUNCTION", p101_c_analysis_kind_name(P101_C_ANALYSIS_FUNCTION));
-    TEST_ASSERT_EQUAL_STRING("skip-cleanup", p101_c_mutation_kind_name(P101_C_MUTATION_SKIP_CLEANUP));
+    TEST_ASSERT_EQUAL_STRING("skip-call", p101_c_mutation_kind_name(P101_C_MUTATION_SKIP_CALL));
 
     TEST_ASSERT_EQUAL_INT(0, unlink(database));
     TEST_ASSERT_EQUAL_INT(0, unlink(source));
     TEST_ASSERT_EQUAL_INT(0, rmdir(directory));
 }
+
+P101_ATTR_SEMANTIC_ROLE("p101:boundary-case:boundary:c-fact-analysis:identity_mismatch")
 
 static void test_directory_analysis_exercises_semantic_records(void)
 {
@@ -454,7 +505,7 @@ static void test_directory_analysis_exercises_semantic_records(void)
     write_file(header,
                "#ifndef DEMO_H\n"
                "#define DEMO_H\n"
-               "#define P101_TRACE_SCOPE(value) ((void)(value))\n"
+               "struct __attribute__((annotate(\"p101:trace-scope\"))) p101_trace_scope { int value; };\n"
                "typedef int demo_alias;\n"
                "struct demo_struct { int value; };\n"
                "union demo_union { int value; long other; };\n"
@@ -464,29 +515,48 @@ static void test_directory_analysis_exercises_semantic_records(void)
                "#include \"demo.h\"\n"
                "#define LOCAL_MACRO 1\n"
                "struct p101_env; struct p101_error;\n"
-               "int p101_error_has_error(struct p101_error *err);\n"
-               "int p101_error_has_no_error(struct p101_error *err);\n"
+               "struct p101_error *p101_error_optional(void) __attribute__((annotate(\"p101:optional-error\")));\n"
+               "#define P101_ERROR_OPTIONAL p101_error_optional()\n"
+               "int p101_error_has_error(struct p101_error *err) __attribute__((annotate(\"p101:error-state-query\")));\n"
+               "int p101_error_has_no_error(struct p101_error *err) __attribute__((annotate(\"p101:error-state-query\")));\n"
                "#define NULL ((void *)0)\n"
                "int p101_first(const struct p101_env *env, struct p101_error *err);\n"
                "int p101_second(const struct p101_env *env, struct p101_error *err);\n"
                "int p101_close(const struct p101_env *env, struct p101_error *err, int fd);\n"
                "int p101_fclose(const struct p101_env *env, struct p101_error *err, void *stream);\n"
                "void p101_free(const struct p101_env *env, void *memory);\n"
+               "struct analysis_context { const struct p101_env *env; struct p101_error *err; };\n"
+               "typedef void *client_data;\n"
+               "struct callback_context { const struct p101_env *env; struct p101_error *err; };\n"
+               "static int contextual(struct analysis_context *context) {\n"
+               "  int result;\n"
+               "  result = p101_first(context->env, context->err);\n"
+               "  return result;\n"
+               "}\n"
+               "static unsigned semantic_callback(int cursor, client_data data) {\n"
+               "  struct callback_context *context;\n"
+               "  int result;\n"
+               "  context = (struct callback_context *)data;\n"
+               "  result = p101_first(context->env, context->err);\n"
+               "  (void)cursor;\n"
+               "  return (unsigned)result;\n"
+               "}\n"
                "static int variadic(int first, ...) { return first; }\n"
                "static int target(void) { return 1; }\n"
                "static int (*callback)(void) = target;\n"
                "static int demo(const struct p101_env *env, struct p101_error *err, void *memory) {\n"
+               "  struct p101_trace_scope trace_scope;\n"
                "  struct p101_error *local_error = err;\n"
                "  int value = LOCAL_MACRO;\n"
-               "  P101_TRACE_SCOPE(env);\n"
+               "  (void)trace_scope;\n"
                "  p101_first(env, local_error);\n"
                "  if(p101_error_has_error(local_error)) { return -1; }\n"
                "  p101_first(env, local_error);\n"
                "  p101_error_has_error(local_error);\n"
                "  p101_first(env, NULL);\n"
                "  p101_first(env, local_error);\n"
-               "  /* P101_ERROR_CONTRACT_ALLOW_NO_ERROR: absence is expected. */\n"
-               "  p101_first(env, 0);\n"
+               "  /* P101_ERROR_OPTIONAL rationale: absence is expected. */\n"
+               "  p101_first(env, P101_ERROR_OPTIONAL);\n"
                "  value += (1 == 1) + (1 != 2) + (1 < 2) + (1 <= 2) + (2 > 1) + (2 >= 1);\n"
                "  value += p101_error_has_no_error(local_error) ? 1 : 0;\n"
                "  switch(value) { case 0: break; default: value += callback(); break; }\n"
@@ -524,6 +594,10 @@ static void test_directory_analysis_exercises_semantic_records(void)
     TEST_ASSERT_TRUE(counts.saw_macro_expansion);
     TEST_ASSERT_TRUE(counts.saw_macro_expansion_extent);
     TEST_ASSERT_TRUE(counts.saw_trace);
+    TEST_ASSERT_TRUE(counts.saw_context_env_contract);
+    TEST_ASSERT_TRUE(counts.saw_context_error_contract);
+    TEST_ASSERT_TRUE(counts.saw_callback_env_contract);
+    TEST_ASSERT_TRUE(counts.saw_callback_error_contract);
     TEST_ASSERT_TRUE(counts.saw_error_discard);
     TEST_ASSERT_TRUE(counts.saw_error_optional);
     TEST_ASSERT_TRUE(counts.saw_error_propagated);
@@ -560,6 +634,8 @@ static void test_directory_analysis_exercises_semantic_records(void)
     TEST_ASSERT_EQUAL_INT(0, unlink(header));
     TEST_ASSERT_EQUAL_INT(0, rmdir(directory));
 }
+
+P101_ATTR_SEMANTIC_ROLE("p101:boundary-case:boundary:c-fact-analysis:resource_limit")
 
 static void test_analysis_failures_and_faults(void)
 {
@@ -663,6 +739,132 @@ static void test_analysis_failures_and_faults(void)
     TEST_ASSERT_EQUAL_INT(0, rmdir(directory));
 }
 
+static void test_call_results_must_be_isolated(void)
+{
+    char                           directory[PATH_SIZE];
+    char                           source[PATH_SIZE];
+    char                           cxx_source[PATH_SIZE];
+    const char                    *paths[2];
+    struct p101_c_analysis_options options;
+    struct analysis_counts         counts;
+
+    (void)snprintf(directory, sizeof(directory), "/tmp/p101-c-analysis-call-shape-%ld", (long)getpid());
+    (void)snprintf(source, sizeof(source), "%s/call-shape.c", directory);
+    (void)snprintf(cxx_source, sizeof(cxx_source), "%s/call-shape.cpp", directory);
+    TEST_ASSERT_EQUAL_INT(0, mkdir(directory, 0700));
+    write_file(source,
+               "static int source(void) { int result; result = 1; return result; }\n"
+               "static int consume(int value) { return value; }\n"
+               "static void sink(void) {}\n"
+               "#define TRACE_CALL() ((void)sink())\n"
+               "static int good(void) {\n"
+               "  int first;\n"
+               "  int second = source();\n"
+               "  first = source();\n"
+               "  sink();\n"
+               "  source();\n"
+               "  TRACE_CALL();\n"
+               "labeled:\n"
+               "  sink();\n"
+               "  first = consume(first);\n"
+               "  return first + second;\n"
+               "}\n"
+               "static int bad_condition(void) {\n"
+               "  int result = 0;\n"
+               "  if(source()) { result = 1; }\n"
+               "  return result;\n"
+               "}\n"
+               "static int bad_argument(void) {\n"
+               "  int result;\n"
+               "  result = consume(source());\n"
+               "  return result;\n"
+               "}\n"
+               "static int bad_return(void) { return source(); }\n"
+               "static int bad_arithmetic(void) {\n"
+               "  int result;\n"
+               "  result = source() + 1;\n"
+               "  return result;\n"
+               "}\n"
+               "static bool good_implicit_conversion(void) {\n"
+               "  bool result;\n"
+               "  result = source();\n"
+               "  return result;\n"
+               "}\n"
+               "static int bad_explicit_cast(void) {\n"
+               "  int result;\n"
+               "  result = (int)source();\n"
+               "  return result;\n"
+               "}\n"
+               "static int bad_void_cast(void) {\n"
+               "  int result = 0;\n"
+               "  (void)source();\n"
+               "  return result;\n"
+               "}\n");
+    write_file(cxx_source,
+               "static int source() { int result; result = 1; return result; }\n"
+               "static int consume(int value) { return value; }\n"
+               "static void sink() {}\n"
+               "#define TRACE_CALL() ((void)sink())\n"
+               "static int good() {\n"
+               "  int first;\n"
+               "  int second = source();\n"
+               "  first = source();\n"
+               "  sink();\n"
+               "  source();\n"
+               "  TRACE_CALL();\n"
+               "labeled:\n"
+               "  sink();\n"
+               "  first = consume(first);\n"
+               "  return first + second;\n"
+               "}\n"
+               "static int bad_condition() {\n"
+               "  int result = 0;\n"
+               "  if(source()) { result = 1; }\n"
+               "  return result;\n"
+               "}\n"
+               "static int bad_argument() {\n"
+               "  int result;\n"
+               "  result = consume(source());\n"
+               "  return result;\n"
+               "}\n"
+               "static int bad_return() { return source(); }\n"
+               "static int bad_arithmetic() {\n"
+               "  int result;\n"
+               "  result = source() + 1;\n"
+               "  return result;\n"
+               "}\n"
+               "static bool good_implicit_conversion() {\n"
+               "  bool result;\n"
+               "  result = source();\n"
+               "  return result;\n"
+               "}\n"
+               "static int bad_explicit_cast() {\n"
+               "  int result;\n"
+               "  result = (int)source();\n"
+               "  return result;\n"
+               "}\n"
+               "static int bad_void_cast() {\n"
+               "  int result = 0;\n"
+               "  (void)source();\n"
+               "  return result;\n"
+               "}\n");
+
+    memset(&options, 0, sizeof(options));
+    memset(&counts, 0, sizeof(counts));
+    paths[0]           = source;
+    paths[1]           = cxx_source;
+    options.paths      = paths;
+    options.path_count = 2U;
+    TEST_ASSERT_TRUE(p101_c_analysis_scan(env, error, &options, count_record, &counts));
+    TEST_ASSERT_FALSE(p101_error_has_error(error));
+    TEST_ASSERT_EQUAL_UINT(12U, counts.call_results_not_isolated);
+    TEST_ASSERT_EQUAL_INT(0, unlink(cxx_source));
+    TEST_ASSERT_EQUAL_INT(0, unlink(source));
+    TEST_ASSERT_EQUAL_INT(0, rmdir(directory));
+}
+
+P101_ATTR_SEMANTIC_ROLE("p101:boundary-case:boundary:c-fact-analysis:typed_refusal")
+
 static void test_invalid_analysis_arguments(void)
 {
     struct p101_c_analysis_options options;
@@ -676,6 +878,8 @@ static void test_invalid_analysis_arguments(void)
     options.path_count = 1U;
     TEST_ASSERT_FALSE(p101_c_analysis_scan(env, error, &options, NULL, NULL));
 }
+
+P101_ATTR_SEMANTIC_ROLE("p101:boundary-case:boundary:c-fact-analysis:binding_swap")
 
 static void test_clang_error_diagnostic_is_observable(void)
 {
@@ -718,6 +922,7 @@ int main(void)
     }
     RUN_TEST(test_analysis_and_compile_command);
     RUN_TEST(test_directory_analysis_exercises_semantic_records);
+    RUN_TEST(test_call_results_must_be_isolated);
     RUN_TEST(test_analysis_failures_and_faults);
     RUN_TEST(test_invalid_analysis_arguments);
     RUN_TEST(test_clang_error_diagnostic_is_observable);
