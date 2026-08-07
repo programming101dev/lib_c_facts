@@ -111,4 +111,7 @@ endfunction()
 
 p101_add_test(test_facts test_facts.c)
 p101_add_test(test_analysis test_analysis.c)
-p101_add_test(test_fault_wrappers test_fault_wrappers.c)
+include(${CMAKE_CURRENT_SOURCE_DIR}/fault_shards.cmake)
+foreach(p101_fault_shard IN LISTS P101_FAULT_SHARD_TESTS)
+    p101_add_test(${p101_fault_shard} ${p101_fault_shard}.c)
+endforeach()
