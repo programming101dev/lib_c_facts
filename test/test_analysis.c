@@ -46,6 +46,7 @@ struct analysis_counts
     bool   saw_include;
     bool   saw_local_include;
     char   include_name[PATH_SIZE];
+    char   include_resolved[PATH_SIZE];
     bool   saw_type;
     bool   saw_macro;
     bool   saw_macro_definition;
@@ -171,6 +172,7 @@ static bool count_record(const struct p101_env *callback_env, struct p101_error 
         counts->saw_include       = true;
         counts->saw_local_include = counts->saw_local_include || record->is_local_include;
         (void)snprintf(counts->include_name, sizeof(counts->include_name), "%s", record->name);
+        (void)snprintf(counts->include_resolved, sizeof(counts->include_resolved), "%s", record->resolved_include == NULL ? "" : record->resolved_include);
     }
     else if(record->kind == P101_C_ANALYSIS_TYPE)
     {
@@ -588,6 +590,13 @@ static void test_directory_analysis_exercises_semantic_records(void)
     TEST_ASSERT_TRUE(counts.saw_include);
     TEST_ASSERT_TRUE(counts.saw_local_include);
     TEST_ASSERT_EQUAL_STRING("demo.h", counts.include_name);
+    /*
+     * The include resolves inside the scanned directory, so the record must
+     * carry the file libclang actually opened, not just the spelling.
+     */
+    TEST_ASSERT_TRUE(counts.include_resolved[0] != '\0');
+    TEST_ASSERT_TRUE(strlen(counts.include_resolved) >= strlen("demo.h"));
+    TEST_ASSERT_EQUAL_STRING("demo.h", counts.include_resolved + strlen(counts.include_resolved) - strlen("demo.h"));
     TEST_ASSERT_TRUE(counts.saw_type);
     TEST_ASSERT_TRUE(counts.saw_macro);
     TEST_ASSERT_TRUE(counts.saw_macro_definition);

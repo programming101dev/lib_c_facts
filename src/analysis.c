@@ -70,6 +70,13 @@ struct inclusion_context
     struct scan_context *scan;
 };
 
+struct binary_operands
+{
+    CXCursor left;
+    CXCursor right;
+    unsigned count;
+};
+
 static bool path_is_admitted(const struct p101_env *env, struct p101_error *err, const struct p101_c_analysis_options *options, const char *path);
 static bool path_has_source_suffix(const struct p101_env *env, const char *path);
 static bool path_has_header_suffix(const struct p101_env *env, const char *path);
@@ -85,8 +92,9 @@ static void                    emit_mutation_record(struct scan_context *context
 static bool                    emit_record(struct scan_context *context, const struct p101_c_analysis_record *record);
 static char                   *copy_cx_string(const struct p101_env *env, struct p101_error *err, CXString value);
 static char                   *copy_text(const struct p101_env *env, struct p101_error *err, const char *text);
-static char                   *source_range_text(const struct p101_env *env, struct p101_error *err, const char *path, size_t start, size_t end);
-static char                   *include_target_text(const struct p101_env *env, struct p101_error *err, CXCursor cursor, const char *path, bool *is_local);
+static char                   *source_range_text(const struct p101_env *env, struct p101_error *err, CXTranslationUnit translation_unit, const char *path, size_t start, size_t end);
+static char                   *include_target_text(const struct p101_env *env, struct p101_error *err, CXTranslationUnit translation_unit, CXCursor cursor, const char *path, bool *is_local);
+static char                   *include_resolved_path(const struct p101_env *env, struct p101_error *err, CXCursor cursor);
 static void                    cursor_location(const struct p101_env *env, struct p101_error *err, CXCursor cursor, char **path, size_t *line, size_t *column, size_t *offset);
 static bool                    cursor_is_definition(CXCursor cursor);
 static int                     function_parameter_index(const struct p101_env *env, CXCursor cursor, const char *record_usr);
@@ -102,11 +110,12 @@ static bool                    cursor_is_null_pointer_constant(CXCursor cursor);
 static bool                    call_uses_optional_error(const struct p101_env *env, CXCursor cursor, unsigned argument_index);
 static bool                    call_is_generated_by_macro(CXCursor cursor);
 static bool                    call_is_isolated(struct scan_context *context, CXCursor cursor, CXCursor parent);
-static bool                    binary_parent_is_simple_assignment(struct scan_context *context, CXCursor cursor, CXCursor parent);
+static bool                    binary_parent_is_simple_assignment(CXCursor parent);
 static char                   *cursor_argument_identity(const struct p101_env *env, struct p101_error *err, CXCursor cursor, unsigned index);
 static void                    emit_note(struct scan_context *context, const char *path, size_t line, size_t column, size_t start, size_t end, bool is_header, const char *name);
 static void                    emit_note_as(struct scan_context *context, const char *path, size_t line, size_t column, size_t start, size_t end, bool is_header, const char *name, const char *caller, const char *caller_usr);
 static void                    cursor_extent_offsets(CXCursor cursor, size_t *start, size_t *end);
+static enum CXChildVisitResult capture_binary_operands(CXCursor cursor, CXCursor parent, CXClientData client_data);
 static void                    mutation_from_binary(struct scan_context *context, CXCursor cursor, const char *path, size_t line, size_t column);
 static void                    mutation_from_call(struct scan_context *context, CXCursor cursor, CXCursor parent, const char *path, size_t line, size_t column);
 static bool                    should_skip_directory(const struct p101_env *env, const char *name);
@@ -1239,49 +1248,19 @@ static bool call_is_generated_by_macro(CXCursor cursor)
     return generated;
 }
 
-static bool binary_parent_is_simple_assignment(struct scan_context *context, CXCursor cursor, CXCursor parent)
+/*
+ * The caller has already established that the parent cursor is a
+ * BinaryOperator. Ask libclang for the operator itself instead of scanning
+ * tokens: a token scan cannot tell "a = helper(b)" from
+ * "(a = helper(b)) == helper(c)", where the parent operator is "==".
+ */
+static bool binary_parent_is_simple_assignment(CXCursor parent)
 {
-    CXToken         *tokens;
-    unsigned         token_count;
-    unsigned         call_offset;
-    bool             assignment;
-    CXSourceRange    call_range;
-    CXSourceLocation location;
+    enum CXBinaryOperatorKind operator_kind;
+    bool                      assignment;
 
-    tokens      = NULL;
-    token_count = 0U;
-    call_offset = 0U;
-    assignment  = false;
-    call_range  = clang_getCursorExtent(cursor);
-    location    = clang_getRangeStart(call_range);
-    clang_getExpansionLocation(location, NULL, NULL, NULL, &call_offset);
-    call_range = clang_getCursorExtent(parent);
-    clang_tokenize(context->translation_unit, call_range, &tokens, &token_count);
-    for(unsigned index = 0U; index < token_count && !assignment; index++)
-    {
-        CXSourceRange range;
-        unsigned      token_offset;
-        CXString      spelling;
-        const char   *token_text;
-        int           comparison;
-
-        range    = clang_getTokenExtent(context->translation_unit, tokens[index]);
-        location = clang_getRangeStart(range);
-        clang_getExpansionLocation(location, NULL, NULL, NULL, &token_offset);
-        spelling   = clang_getTokenSpelling(context->translation_unit, tokens[index]);
-        token_text = clang_getCString(spelling);
-        comparison = 1;
-        if(token_offset < call_offset && token_text != NULL)
-        {
-            comparison = p101_strcmp(context->env, token_text, "=");
-        }
-        if(token_offset < call_offset && token_text != NULL && comparison == 0)
-        {
-            assignment = true;
-        }
-        clang_disposeString(spelling);
-    }
-    clang_disposeTokens(context->translation_unit, tokens, token_count);
+    operator_kind = clang_getCursorBinaryOperatorKind(parent);
+    assignment    = operator_kind == CXBinaryOperator_Assign;
     return assignment;
 }
 
@@ -1292,6 +1271,7 @@ static bool call_is_isolated(struct scan_context *context, CXCursor cursor, CXCu
     enum CXCursorKind             ancestor_kind;
     bool                          isolated;
 
+    (void)cursor;
     (void)parent;
     ancestor = context->ancestry;
     if(ancestor == NULL)
@@ -1322,7 +1302,7 @@ static bool call_is_isolated(struct scan_context *context, CXCursor cursor, CXCu
     }
     else if(parent_kind == CXCursor_BinaryOperator)
     {
-        isolated = binary_parent_is_simple_assignment(context, cursor, ancestor->cursor);
+        isolated = binary_parent_is_simple_assignment(ancestor->cursor);
     }
     return isolated;
 }
@@ -1332,7 +1312,6 @@ static char *enum_cursor_name(const struct p101_env *env, struct p101_error *err
     char             *name;
     CXString          spelling;
     enum CXCursorKind parent_kind;
-    int               comparison;
 
     P101_TRACE_SCOPE(env);
     spelling    = clang_getCursorSpelling(cursor);
@@ -1344,14 +1323,20 @@ static char *enum_cursor_name(const struct p101_env *env, struct p101_error *err
         spelling = clang_getCursorSpelling(parent);
         name     = copy_cx_string(env, err, spelling);
     }
-    comparison = 1;
-    if(name != NULL)
+    else
     {
-        comparison = p101_strncmp(env, name, "enum (unnamed", sizeof("enum (unnamed") - 1U);
-    }
-    if(name != NULL && comparison == 0)
-    {
-        name[0] = '\0';
+        unsigned anonymous;
+
+        /*
+         * Ask libclang whether the declaration is anonymous instead of
+         * prefix-matching the "enum (unnamed at ...)" rendering that
+         * libclang uses for diagnostics.
+         */
+        anonymous = clang_Cursor_isAnonymous(cursor);
+        if(name != NULL && anonymous != 0U)
+        {
+            name[0] = '\0';
+        }
     }
     return name;
 }
@@ -1440,10 +1425,11 @@ static void emit_cursor_record(struct scan_context *context, CXCursor cursor, CX
 
     if(cursor_kind == CXCursor_InclusionDirective)
     {
-        bool local_include;
+        bool  local_include;
+        char *resolved;
 
         record.kind = P101_C_ANALYSIS_INCLUDE;
-        name        = include_target_text(context->env, context->err, cursor, path, &local_include);
+        name        = include_target_text(context->env, context->err, context->translation_unit, cursor, path, &local_include);
         record.name = name;
         if(name == NULL)
         {
@@ -1451,9 +1437,30 @@ static void emit_cursor_record(struct scan_context *context, CXCursor cursor, CX
         }
         else
         {
-            record.is_local_include = local_include;
-            emitted                 = emit_record(context, &record);
-            (void)emitted;
+            resolved = include_resolved_path(context->env, context->err, cursor);
+            if(resolved == NULL)
+            {
+                context->stopped = true;
+            }
+            else
+            {
+                /*
+                 * Admission of the resolved file, not the include delimiter,
+                 * decides locality: a quoted include can still reach a system
+                 * header, and an angled include can reach a project header
+                 * through -I. The delimiter only survives as the fallback for
+                 * a header the search paths could not resolve.
+                 */
+                if(resolved[0] != '\0')
+                {
+                    local_include = path_is_admitted(context->env, context->err, context->options, resolved);
+                }
+                record.resolved_include = resolved;
+                record.is_local_include = local_include;
+                emitted                 = emit_record(context, &record);
+                (void)emitted;
+                p101_free(context->env, resolved);
+            }
         }
     }
     else
@@ -2099,7 +2106,7 @@ p101_single_exit_:
     return;
 }
 
-static char *include_target_text(const struct p101_env *env, struct p101_error *err, CXCursor cursor, const char *path, bool *is_local)
+static char *include_target_text(const struct p101_env *env, struct p101_error *err, CXTranslationUnit translation_unit, CXCursor cursor, const char *path, bool *is_local)
 {
     char            *p101_single_result_;
     CXSourceRange    range;
@@ -2130,7 +2137,7 @@ static char *include_target_text(const struct p101_env *env, struct p101_error *
         p101_single_result_ = NULL;
         goto p101_single_exit_;
     }
-    text = source_range_text(env, err, path, start, end);
+    text = source_range_text(env, err, translation_unit, path, start, end);
     if(text == NULL)
     {
         p101_single_result_ = NULL;
@@ -2173,17 +2180,43 @@ p101_single_exit_:
     return p101_single_result_;
 }
 
-static char *source_range_text(const struct p101_env *env, struct p101_error *err, const char *path, size_t start, size_t end)
+/*
+ * Report where an inclusion directive actually landed. libclang resolves the
+ * directive against the same search paths the compiler used, so the answer is
+ * the ground truth that the include spelling only approximates. An
+ * unresolvable header (one the search paths do not contain) yields an empty
+ * path, never NULL; NULL means the copy itself failed.
+ */
+static char *include_resolved_path(const struct p101_env *env, struct p101_error *err, CXCursor cursor)
 {
-    char  *p101_single_result_;
-    FILE  *stream;
+    CXFile included;
     char  *text;
-    size_t length;
-    size_t read_count;
-    int    seek_status;
-    int    close_status;
-    bool   has_error;
-    void  *allocation;
+
+    P101_TRACE_SCOPE(env);
+    included = clang_getIncludedFile(cursor);
+    if(included == NULL)
+    {
+        text = copy_text(env, err, "");
+    }
+    else
+    {
+        CXString name;
+
+        name = clang_getFileName(included);
+        text = copy_cx_string(env, err, name);
+    }
+    return text;
+}
+
+static char *source_range_text(const struct p101_env *env, struct p101_error *err, CXTranslationUnit translation_unit, const char *path, size_t start, size_t end)
+{
+    char       *p101_single_result_;
+    CXFile      file;
+    const char *contents;
+    size_t      contents_size;
+    char       *text;
+    size_t      length;
+    void       *allocation;
 
     P101_TRACE_SCOPE(env);
     /*
@@ -2196,9 +2229,21 @@ static char *source_range_text(const struct p101_env *env, struct p101_error *er
         p101_single_result_ = NULL;
         goto p101_single_exit_;
     }
-    if(end - start > SIZE_MAX - 1U)
+    /*
+     * Read from the buffer libclang already parsed rather than from disk.
+     * Re-reading the file would race against edits made since the parse and
+     * would silently drop records when the file moved or shrank.
+     */
+    file = clang_getFile(translation_unit, path);
+    if(file == NULL)
     {
-        P101_ERROR_RAISE_CHECK(err);
+        p101_single_result_ = NULL;
+        goto p101_single_exit_;
+    }
+    contents_size = 0U;
+    contents      = clang_getFileContents(translation_unit, file, &contents_size);
+    if(contents == NULL || start > contents_size || end > contents_size)
+    {
         p101_single_result_ = NULL;
         goto p101_single_exit_;
     }
@@ -2210,41 +2255,8 @@ static char *source_range_text(const struct p101_env *env, struct p101_error *er
         p101_single_result_ = NULL;
         goto p101_single_exit_;
     }
-    stream = p101_fopen(env, err, path, "rb");
-    if(stream == NULL)
-    {
-        p101_free(env, text);
-        p101_single_result_ = NULL;
-        goto p101_single_exit_;
-    }
-    seek_status = p101_fseek(env, err, stream, (long)start, SEEK_SET);
-    if(seek_status != 0)
-    {
-        /* P101_ERROR_OPTIONAL rationale: preserve the seek failure. */
-        p101_fclose(env, P101_ERROR_OPTIONAL, stream);
-        p101_free(env, text);
-        p101_single_result_ = NULL;
-        goto p101_single_exit_;
-    }
-    read_count = p101_fread(env, err, text, 1U, length, stream);
-    has_error  = p101_error_has_error(err);
-    if(read_count != length || has_error)
-    {
-        /* P101_ERROR_OPTIONAL rationale: preserve the read failure. */
-        p101_fclose(env, P101_ERROR_OPTIONAL, stream);
-        p101_free(env, text);
-        p101_single_result_ = NULL;
-        goto p101_single_exit_;
-    }
-    close_status = p101_fclose(env, err, stream);
-    (void)close_status;
-    has_error = p101_error_has_error(err);
-    if(has_error)
-    {
-        p101_free(env, text);
-        p101_single_result_ = NULL;
-        goto p101_single_exit_;
-    }
+    /* The libclang buffer is not NUL-terminated, so copy and terminate. */
+    p101_memmove(env, text, contents + start, length);
     text[length]        = '\0';
     p101_single_result_ = text;
     goto p101_single_exit_;
@@ -2253,6 +2265,35 @@ p101_single_exit_:
     return p101_single_result_;
 }
 
+static enum CXChildVisitResult capture_binary_operands(CXCursor cursor, CXCursor parent, CXClientData client_data)
+{
+    struct binary_operands *operands;
+    enum CXChildVisitResult result;
+
+    (void)parent;
+    operands = (struct binary_operands *)client_data;
+    result   = CXChildVisit_Break;
+    if(operands->count == 0U)
+    {
+        operands->left  = cursor;
+        operands->count = 1U;
+        result          = CXChildVisit_Continue;
+    }
+    else if(operands->count == 1U)
+    {
+        operands->right = cursor;
+        operands->count = 2U;
+    }
+    return result;
+}
+
+/*
+ * Emit at most one mutation candidate for the operator that this cursor
+ * itself denotes. Tokenizing the whole cursor extent would walk both operand
+ * subtrees and produce one record per matching token, so a nested expression
+ * such as "a == b && c == d" produced duplicated and spurious candidates,
+ * including a unary minus mistaken for a binary subtraction.
+ */
 static void mutation_from_binary(struct scan_context *context, CXCursor cursor, const char *path, size_t line, size_t column)
 {
     static const char *const originals[]    = {"==", "!=", "<", "<=", ">", ">=", "&&", "||", "+", "-"};
@@ -2271,70 +2312,126 @@ static void mutation_from_binary(struct scan_context *context, CXCursor cursor, 
         P101_C_MUTATION_ARITHMETIC_OPERATOR,
     };
 
-    CXToken      *tokens;
-    unsigned      token_count;
-    unsigned      index;
-    CXSourceRange cursor_range;
+    static const enum CXBinaryOperatorKind operators[] = {
+        CXBinaryOperator_EQ,
+        CXBinaryOperator_NE,
+        CXBinaryOperator_LT,
+        CXBinaryOperator_LE,
+        CXBinaryOperator_GT,
+        CXBinaryOperator_GE,
+        CXBinaryOperator_LAnd,
+        CXBinaryOperator_LOr,
+        CXBinaryOperator_Add,
+        CXBinaryOperator_Sub,
+    };
 
-    tokens       = NULL;
-    token_count  = 0U;
-    cursor_range = clang_getCursorExtent(cursor);
-    clang_tokenize(context->translation_unit, cursor_range, &tokens, &token_count);
-    for(index = 0U; index < token_count && !context->stopped; index++)
+    struct binary_operands    operands;
+    enum CXBinaryOperatorKind operator_kind;
+    size_t                    operator_index;
+    size_t                    operator_count;
+    bool                      operator_found;
+    CXToken                  *tokens;
+    unsigned                  token_count;
+    unsigned                  token_index;
+    bool                      emitted_record;
+    CXSourceRange             left_range;
+    CXSourceRange             right_range;
+    CXSourceRange             operator_range;
+    CXSourceLocation          gap_start;
+    CXSourceLocation          gap_end;
+
+    if(context->stopped)
+    {
+        goto p101_single_exit_;
+    }
+    operator_kind  = clang_getCursorBinaryOperatorKind(cursor);
+    operator_count = sizeof(operators) / sizeof(operators[0]);
+    operator_found = false;
+    operator_index = 0U;
+    for(size_t index = 0U; index < operator_count; index++)
+    {
+        if(operators[index] == operator_kind)
+        {
+            operator_index = index;
+            operator_found = true;
+            break;
+        }
+    }
+    if(!operator_found)
+    {
+        goto p101_single_exit_;
+    }
+    operands.count = 0U;
+    operands.left  = clang_getNullCursor();
+    operands.right = clang_getNullCursor();
+    clang_visitChildren(cursor, capture_binary_operands, &operands);
+    if(operands.count < 2U)
+    {
+        goto p101_single_exit_;
+    }
+    left_range     = clang_getCursorExtent(operands.left);
+    right_range    = clang_getCursorExtent(operands.right);
+    gap_start      = clang_getRangeEnd(left_range);
+    gap_end        = clang_getRangeStart(right_range);
+    operator_range = clang_getRange(gap_start, gap_end);
+    tokens         = NULL;
+    token_count    = 0U;
+    emitted_record = false;
+    clang_tokenize(context->translation_unit, operator_range, &tokens, &token_count);
+    for(token_index = 0U; token_index < token_count && !emitted_record; token_index++)
     {
         CXString    spelling;
         const char *token_text;
-        size_t      replacement_index;
+        int         comparison;
 
-        spelling   = clang_getTokenSpelling(context->translation_unit, tokens[index]);
+        spelling   = clang_getTokenSpelling(context->translation_unit, tokens[token_index]);
         token_text = clang_getCString(spelling);
-        for(replacement_index = 0U; replacement_index < sizeof(originals) / sizeof(originals[0]); replacement_index++)
+        comparison = 1;
+        if(token_text != NULL)
         {
-            int comparison;
+            comparison = p101_strcmp(context->env, token_text, originals[operator_index]);
+        }
+        if(token_text != NULL && comparison == 0)
+        {
+            struct p101_c_analysis_record record;
+            CXSourceRange                 range;
+            CXFile                        file;
+            unsigned                      start_line;
+            unsigned                      start_column;
+            unsigned                      start_offset;
+            unsigned                      end_line;
+            unsigned                      end_column;
+            unsigned                      end_offset;
+            CXSourceLocation              range_start;
+            CXSourceLocation              range_end;
+            bool                          emitted;
 
-            comparison = 1;
-            if(token_text != NULL)
-            {
-                comparison = p101_strcmp(context->env, token_text, originals[replacement_index]);
-            }
-            if(token_text != NULL && comparison == 0)
-            {
-                struct p101_c_analysis_record record;
-                CXSourceRange                 range;
-                CXFile                        file;
-                unsigned                      start_line;
-                unsigned                      start_column;
-                unsigned                      start_offset;
-                unsigned                      end_line;
-                unsigned                      end_column;
-                unsigned                      end_offset;
-                CXSourceLocation              range_start;
-                CXSourceLocation              range_end;
-                bool                          emitted;
-
-                range       = clang_getTokenExtent(context->translation_unit, tokens[index]);
-                range_start = clang_getRangeStart(range);
-                clang_getSpellingLocation(range_start, &file, &start_line, &start_column, &start_offset);
-                range_end = clang_getRangeEnd(range);
-                clang_getSpellingLocation(range_end, &file, &end_line, &end_column, &end_offset);
-                p101_memset(context->env, &record, 0, sizeof(record));
-                record.kind         = P101_C_ANALYSIS_MUTATION;
-                record.path         = path;
-                record.line         = line;
-                record.column       = column;
-                record.start_offset = start_offset;
-                record.end_offset   = end_offset;
-                record.name         = originals[replacement_index];
-                record.replacement  = replacements[replacement_index];
-                record.mutation     = kinds[replacement_index];
-                emitted             = emit_record(context, &record);
-                (void)emitted;
-                break;
-            }
+            range       = clang_getTokenExtent(context->translation_unit, tokens[token_index]);
+            range_start = clang_getRangeStart(range);
+            clang_getSpellingLocation(range_start, &file, &start_line, &start_column, &start_offset);
+            range_end = clang_getRangeEnd(range);
+            clang_getSpellingLocation(range_end, &file, &end_line, &end_column, &end_offset);
+            p101_memset(context->env, &record, 0, sizeof(record));
+            record.kind         = P101_C_ANALYSIS_MUTATION;
+            record.path         = path;
+            record.line         = line;
+            record.column       = column;
+            record.start_offset = start_offset;
+            record.end_offset   = end_offset;
+            record.name         = originals[operator_index];
+            record.replacement  = replacements[operator_index];
+            record.mutation     = kinds[operator_index];
+            emitted             = emit_record(context, &record);
+            (void)emitted;
+            emitted_record = true;
         }
         clang_disposeString(spelling);
     }
     clang_disposeTokens(context->translation_unit, tokens, token_count);
+    goto p101_single_exit_;
+
+p101_single_exit_:
+    return;
 }
 
 static void mutation_from_call(struct scan_context *context, CXCursor cursor, CXCursor parent, const char *path, size_t line, size_t column)
@@ -2379,28 +2476,48 @@ static void mutation_from_call(struct scan_context *context, CXCursor cursor, CX
     }
     if(has_predicate_replacement)
     {
-        CXToken *tokens;
-        unsigned token_count;
-        unsigned token_index;
+        CXToken         *tokens;
+        unsigned         token_count;
+        unsigned         token_index;
+        unsigned         callee_offset;
+        bool             emitted_record;
+        CXSourceLocation cursor_start;
 
-        tokens       = NULL;
-        token_count  = 0U;
-        cursor_range = clang_getCursorExtent(cursor);
+        tokens         = NULL;
+        token_count    = 0U;
+        callee_offset  = 0U;
+        emitted_record = false;
+        cursor_range   = clang_getCursorExtent(cursor);
+        cursor_start   = clang_getRangeStart(cursor_range);
+        clang_getSpellingLocation(cursor_start, NULL, NULL, NULL, &callee_offset);
         clang_tokenize(context->translation_unit, cursor_range, &tokens, &token_count);
-        for(token_index = 0U; token_index < token_count; token_index++)
+        /*
+         * The callee token precedes the '(' and every argument token, so the
+         * first token at or after the extent start that spells the callee is
+         * the callee itself. Stopping there keeps a nested call to the same
+         * function from producing a duplicate candidate.
+         */
+        for(token_index = 0U; token_index < token_count && !emitted_record; token_index++)
         {
-            CXString    spelling;
-            const char *token_text;
-            int         comparison;
+            CXString         spelling;
+            const char      *token_text;
+            int              comparison;
+            unsigned         token_offset;
+            CXSourceRange    token_range;
+            CXSourceLocation token_start;
 
+            token_range  = clang_getTokenExtent(context->translation_unit, tokens[token_index]);
+            token_start  = clang_getRangeStart(token_range);
+            token_offset = 0U;
+            clang_getSpellingLocation(token_start, NULL, NULL, NULL, &token_offset);
             spelling   = clang_getTokenSpelling(context->translation_unit, tokens[token_index]);
             token_text = clang_getCString(spelling);
             comparison = 1;
-            if(token_text != NULL)
+            if(token_offset >= callee_offset && token_text != NULL)
             {
                 comparison = p101_strcmp(context->env, token_text, name);
             }
-            if(token_text != NULL && comparison == 0)
+            if(token_offset >= callee_offset && token_text != NULL && comparison == 0)
             {
                 struct p101_c_analysis_record record;
                 CXSourceRange                 range;
@@ -2432,6 +2549,7 @@ static void mutation_from_call(struct scan_context *context, CXCursor cursor, CX
                 record.mutation     = P101_C_MUTATION_ERROR_PREDICATE;
                 emitted             = emit_record(context, &record);
                 (void)emitted;
+                emitted_record = true;
             }
             clang_disposeString(spelling);
         }
@@ -2461,7 +2579,7 @@ static void mutation_from_call(struct scan_context *context, CXCursor cursor, CX
         clang_getSpellingLocation(range_start, &file, &start_line, &start_column, &start_offset);
         range_end = clang_getRangeEnd(range);
         clang_getSpellingLocation(range_end, &file, &end_line, &end_column, &end_offset);
-        original = source_range_text(context->env, context->err, path, start_offset, end_offset);
+        original = source_range_text(context->env, context->err, context->translation_unit, path, start_offset, end_offset);
         if(original != NULL)
         {
             bool emitted;
@@ -2670,12 +2788,14 @@ p101_single_exit_:
 static bool scan_source(const struct p101_env *env, struct p101_error *err, const struct p101_c_analysis_options *options, p101_c_analysis_observer observer, void *observer_context, const char *source, const char *directory, const char *const arguments[],
                         size_t argument_count)
 {
-    bool                     p101_single_result_;
-    CXIndex                  index;
-    CXTranslationUnit        translation_unit;
-    enum CXErrorCode         parse_status;
-    const char              *parse_arguments[ANALYSIS_MAX_ARGUMENTS];
-    char                     resource_argument[ANALYSIS_PATH_SIZE];
+    bool              p101_single_result_;
+    CXIndex           index;
+    CXTranslationUnit translation_unit;
+    enum CXErrorCode  parse_status;
+    const char       *parse_arguments[ANALYSIS_MAX_ARGUMENTS];
+#ifdef P101_LIBCLANG_RESOURCE_DIR
+    char resource_argument[ANALYSIS_PATH_SIZE];
+#endif
     size_t                   parse_argument_count;
     size_t                   argument_index;
     struct scan_context      context;
@@ -2765,8 +2885,6 @@ static bool scan_source(const struct p101_env *env, struct p101_error *err, cons
         }
         parse_arguments[parse_argument_count++] = resource_argument;
     }
-#else
-    (void)resource_argument;
 #endif
 #ifdef P101_LIBCLANG_SYSROOT
     if(!has_sysroot && parse_argument_count + 2U <= ANALYSIS_MAX_ARGUMENTS)
@@ -3112,6 +3230,14 @@ static bool scan_compile_database(const struct p101_env *env, struct p101_error 
     {
         p101_snprintf(env, err, database_directory, sizeof(database_directory), ".");
     }
+    else if(separator == database_directory)
+    {
+        /*
+         * "/compile_commands.json" lives in the root directory; truncating at
+         * the separator would leave an empty, unopenable directory name.
+         */
+        p101_snprintf(env, err, database_directory, sizeof(database_directory), "/");
+    }
     else
     {
         database_directory[(size_t)(separator - database_directory)] = '\0';
@@ -3353,6 +3479,37 @@ const char *p101_c_mutation_kind_name(enum p101_c_mutation_kind kind)
         goto p101_single_exit_;
     }
     p101_single_result_ = names[kind];
+    goto p101_single_exit_;
+
+p101_single_exit_:
+    return p101_single_result_;
+}
+
+bool p101_c_mutation_kind_from_name(const struct p101_env *env, const char *name, enum p101_c_mutation_kind *kind)
+{
+    bool p101_single_result_;
+    int  value;
+
+    P101_TRACE_SCOPE(env);
+    p101_single_result_ = false;
+    if(name == NULL || kind == NULL)
+    {
+        goto p101_single_exit_;
+    }
+    for(value = P101_C_MUTATION_NONE; value <= P101_C_MUTATION_SKIP_CALL; value++)
+    {
+        const char *candidate;
+        int         comparison;
+
+        candidate  = p101_c_mutation_kind_name((enum p101_c_mutation_kind)value);
+        comparison = p101_strcmp(env, name, candidate);
+        if(comparison == 0)
+        {
+            *kind               = (enum p101_c_mutation_kind)value;
+            p101_single_result_ = true;
+            break;
+        }
+    }
     goto p101_single_exit_;
 
 p101_single_exit_:

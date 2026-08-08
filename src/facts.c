@@ -40,8 +40,9 @@ enum
     FACT_TYPE_USR_IDX              = 8,
     FACT_ENUMERATOR_USR_IDX        = 9,
     FACT_ENUMERATOR_PARENT_USR_IDX = 10,
+    FACT_INCLUDE_RESOLVED_IDX      = 9,
     FACT_VALUE_FIELDS              = 8,
-    FACT_INCLUDE_FIELDS            = 9,
+    FACT_INCLUDE_FIELDS            = 10,
     FACT_TYPE_FIELDS               = 9,
     FACT_ENUMERATOR_FIELDS         = 11,
     FACT_MACRO_FIELDS              = 12,
@@ -51,7 +52,6 @@ enum
 };
 
 static size_t                split_fact_line(const struct p101_env *env, char *line, char *fields[], size_t field_count);
-static char                 *find_char(char *text, char ch);
 static enum p101_c_fact_kind parse_kind(const struct p101_env *env, const char *text);
 static bool                  parse_fact_bool(const struct p101_env *env, const char *text, bool *value);
 static bool                  field_count_is_valid(enum p101_c_fact_kind kind, size_t field_count);
@@ -61,7 +61,7 @@ enum p101_c_fact_status p101_c_fact_parse_line(const struct p101_env *env, struc
     enum p101_c_fact_status status;
     char                   *fields[FACT_MAX_FIELDS];
     size_t                  field_count;
-    char                   *newline;
+    const char             *newline;
     int                     comparison;
     int                     parse_status;
     bool                    parsed;
@@ -83,15 +83,15 @@ enum p101_c_fact_status p101_c_fact_parse_line(const struct p101_env *env, struc
         goto done;
     }
 
-    newline = find_char(line, '\n');
+    newline = p101_strchr(env, line, '\n');
     if(newline != NULL)
     {
-        *newline = '\0';
+        line[(size_t)(newline - line)] = '\0';
     }
-    newline = find_char(line, '\r');
+    newline = p101_strchr(env, line, '\r');
     if(newline != NULL)
     {
-        *newline = '\0';
+        line[(size_t)(newline - line)] = '\0';
     }
 
     field_count = split_fact_line(env, line, fields, FACT_MAX_FIELDS);
@@ -149,6 +149,8 @@ enum p101_c_fact_status p101_c_fact_parse_line(const struct p101_env *env, struc
             status = P101_C_FACT_MALFORMED;
             goto done;
         }
+        /* An empty resolved path means the producer could not resolve the header. */
+        fact->resolved = fields[FACT_INCLUDE_RESOLVED_IDX];
     }
     else if(fact->kind == P101_C_FACT_KIND_FUNCTION)
     {
@@ -362,6 +364,134 @@ const char *p101_c_fact_status_name(enum p101_c_fact_status status)
     return name;
 }
 
+enum p101_c_note_kind p101_c_note_kind_from_name(const struct p101_env *env, const char *name)
+{
+    enum p101_c_note_kind kind;
+
+    P101_TRACE_SCOPE(env);
+    kind = P101_C_NOTE_OTHER;
+    if(name != NULL)
+    {
+        static const struct
+        {
+            const char           *name;
+            enum p101_c_note_kind kind;
+        } mappings[] = {
+            {"ENV_CONTRACT",                                      P101_C_NOTE_ENV_CONTRACT           },
+            {"ERROR_CONTRACT",                                    P101_C_NOTE_ERROR_CONTRACT         },
+            {"ENV_USE",                                           P101_C_NOTE_ENV_USE                },
+            {"ERROR_USE",                                         P101_C_NOTE_ERROR_USE              },
+            {"TYPE_SEMANTIC_ROLE:p101:trace-scope",               P101_C_NOTE_TRACE_USE              },
+            {"ERROR_CHECK",                                       P101_C_NOTE_ERROR_CHECK            },
+            {"ERROR_OPTIONAL",                                    P101_C_NOTE_ERROR_OPTIONAL         },
+            {"ERROR_DISCARD",                                     P101_C_NOTE_ERROR_DISCARD          },
+            {"ERROR_PROPAGATED",                                  P101_C_NOTE_ERROR_PROPAGATED       },
+            {"ERROR_UNCHECKED_CHAIN",                             P101_C_NOTE_ERROR_UNCHECKED_CHAIN  },
+            {"FUNCTION_RETURN",                                   P101_C_NOTE_FUNCTION_RETURN        },
+            {"FUNCTION_EARLY_RETURN",                             P101_C_NOTE_FUNCTION_EARLY_RETURN  },
+            {"CALL_NOT_ISOLATED",                                 P101_C_NOTE_CALL_NOT_ISOLATED      },
+            {"CALL_RESULT_DISCARDED",                             P101_C_NOTE_CALL_RESULT_DISCARDED  },
+            {"SEMANTIC_ROLE:p101:termination-adapter",            P101_C_NOTE_TERMINATION_ADAPTER    },
+            {"CALLEE_SEMANTIC_ROLE:p101:ownership:error:acquire", P101_C_NOTE_OWNERSHIP_ERROR_ACQUIRE},
+            {"CALLEE_SEMANTIC_ROLE:p101:ownership:error:release", P101_C_NOTE_OWNERSHIP_ERROR_RELEASE},
+            {"CALLEE_SEMANTIC_ROLE:p101:ownership:env:acquire",   P101_C_NOTE_OWNERSHIP_ENV_ACQUIRE  },
+            {"CALLEE_SEMANTIC_ROLE:p101:ownership:env:release",   P101_C_NOTE_OWNERSHIP_ENV_RELEASE  },
+        };
+
+        for(size_t index = 0U; index < sizeof(mappings) / sizeof(mappings[0]); index++)
+        {
+            int comparison;
+
+            comparison = p101_strcmp(env, name, mappings[index].name);
+            if(comparison == 0)
+            {
+                kind = mappings[index].kind;
+                break;
+            }
+        }
+    }
+    return kind;
+}
+
+const char *p101_c_note_kind_name(enum p101_c_note_kind kind)
+{
+    const char *name;
+
+#ifdef __clang__
+    #pragma clang diagnostic push
+    #pragma clang diagnostic ignored "-Wcovered-switch-default"
+#endif
+    switch(kind)
+    {
+        case P101_C_NOTE_ENV_CONTRACT:
+            name = "ENV_CONTRACT";
+            break;
+        case P101_C_NOTE_ERROR_CONTRACT:
+            name = "ERROR_CONTRACT";
+            break;
+        case P101_C_NOTE_ENV_USE:
+            name = "ENV_USE";
+            break;
+        case P101_C_NOTE_ERROR_USE:
+            name = "ERROR_USE";
+            break;
+        case P101_C_NOTE_TRACE_USE:
+            name = "TYPE_SEMANTIC_ROLE:p101:trace-scope";
+            break;
+        case P101_C_NOTE_ERROR_CHECK:
+            name = "ERROR_CHECK";
+            break;
+        case P101_C_NOTE_ERROR_OPTIONAL:
+            name = "ERROR_OPTIONAL";
+            break;
+        case P101_C_NOTE_ERROR_DISCARD:
+            name = "ERROR_DISCARD";
+            break;
+        case P101_C_NOTE_ERROR_PROPAGATED:
+            name = "ERROR_PROPAGATED";
+            break;
+        case P101_C_NOTE_ERROR_UNCHECKED_CHAIN:
+            name = "ERROR_UNCHECKED_CHAIN";
+            break;
+        case P101_C_NOTE_FUNCTION_RETURN:
+            name = "FUNCTION_RETURN";
+            break;
+        case P101_C_NOTE_FUNCTION_EARLY_RETURN:
+            name = "FUNCTION_EARLY_RETURN";
+            break;
+        case P101_C_NOTE_CALL_NOT_ISOLATED:
+            name = "CALL_NOT_ISOLATED";
+            break;
+        case P101_C_NOTE_CALL_RESULT_DISCARDED:
+            name = "CALL_RESULT_DISCARDED";
+            break;
+        case P101_C_NOTE_TERMINATION_ADAPTER:
+            name = "SEMANTIC_ROLE:p101:termination-adapter";
+            break;
+        case P101_C_NOTE_OWNERSHIP_ERROR_ACQUIRE:
+            name = "CALLEE_SEMANTIC_ROLE:p101:ownership:error:acquire";
+            break;
+        case P101_C_NOTE_OWNERSHIP_ERROR_RELEASE:
+            name = "CALLEE_SEMANTIC_ROLE:p101:ownership:error:release";
+            break;
+        case P101_C_NOTE_OWNERSHIP_ENV_ACQUIRE:
+            name = "CALLEE_SEMANTIC_ROLE:p101:ownership:env:acquire";
+            break;
+        case P101_C_NOTE_OWNERSHIP_ENV_RELEASE:
+            name = "CALLEE_SEMANTIC_ROLE:p101:ownership:env:release";
+            break;
+        case P101_C_NOTE_OTHER:
+        default:
+            name = "OTHER";
+            break;
+    }
+#ifdef __clang__
+    #pragma clang diagnostic pop
+#endif
+
+    return name;
+}
+
 static bool parse_fact_bool(const struct p101_env *env, const char *text, bool *value)
 {
     bool p101_single_result_;
@@ -420,23 +550,6 @@ static size_t split_fact_line(const struct p101_env *env, char *line, char *fiel
 
 p101_single_exit_:
     return p101_single_result_;
-}
-
-static char *find_char(char *text, char ch)
-{
-    char *ret_val;
-
-    ret_val = NULL;
-    while(*text != '\0')
-    {
-        if(*text == ch)
-        {
-            ret_val = text;
-            break;
-        }
-        text++;
-    }
-    return ret_val;
 }
 
 static enum p101_c_fact_kind parse_kind(const struct p101_env *env, const char *text)

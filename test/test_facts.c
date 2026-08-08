@@ -80,7 +80,7 @@ static int inject_selected_fault(const struct p101_env *fault_env, const char *c
 
 static void test_parse_function_fact(void)
 {
-    char                    line[] = "P101FACT\t6\tFUNCTION\t/tmp/demo.c\tdemo\t0\t42\thelper\t1\t0\tc:@F@helper\t100\t200\n";
+    char                    line[] = "P101FACT\t7\tFUNCTION\t/tmp/demo.c\tdemo\t0\t42\thelper\t1\t0\tc:@F@helper\t100\t200\n";
     struct p101_c_fact      fact;
     enum p101_c_fact_status status;
 
@@ -102,18 +102,26 @@ static void test_parse_function_fact(void)
 
 static void test_parse_include_fact(void)
 {
-    char               line[] = "P101FACT\t6\tINCLUDE\t/tmp/demo.c\tdemo\t0\t7\tp101_c/p101_string.h\t0\n";
+    char               line[]       = "P101FACT\t7\tINCLUDE\t/tmp/demo.c\tdemo\t0\t7\tp101_c/p101_string.h\t0\t/usr/include/p101_c/p101_string.h\n";
+    char               unresolved[] = "P101FACT\t7\tINCLUDE\t/tmp/demo.c\tdemo\t0\t8\tmissing.h\t1\t\n";
     struct p101_c_fact fact;
 
     TEST_ASSERT_EQUAL_INT(P101_C_FACT_OK, parse(line, &fact));
     TEST_ASSERT_EQUAL_INT(P101_C_FACT_KIND_INCLUDE, fact.kind);
     TEST_ASSERT_EQUAL_STRING("p101_c/p101_string.h", fact.value);
     TEST_ASSERT_FALSE(fact.is_local);
+    TEST_ASSERT_EQUAL_STRING("/usr/include/p101_c/p101_string.h", fact.resolved);
+
+    TEST_ASSERT_EQUAL_INT(P101_C_FACT_OK, parse(unresolved, &fact));
+    TEST_ASSERT_EQUAL_INT(P101_C_FACT_KIND_INCLUDE, fact.kind);
+    TEST_ASSERT_EQUAL_STRING("missing.h", fact.value);
+    TEST_ASSERT_TRUE(fact.is_local);
+    TEST_ASSERT_EQUAL_STRING("", fact.resolved);
 }
 
 static void test_unescapes_fields(void)
 {
-    char               line[] = "P101FACT\t6\tCALL\t/tmp/a\\\\b.c\tm\t0\t3\tthing\\tname\t1\t1\t1\tcaller\\tname\tcallee-usr\tcaller-usr\t20\t30\n";
+    char               line[] = "P101FACT\t7\tCALL\t/tmp/a\\\\b.c\tm\t0\t3\tthing\\tname\t1\t1\t1\tcaller\\tname\tcallee-usr\tcaller-usr\t20\t30\n";
     struct p101_c_fact fact;
 
     TEST_ASSERT_EQUAL_INT(P101_C_FACT_OK, parse(line, &fact));
@@ -129,7 +137,7 @@ static void test_unescapes_fields(void)
 
 static void test_parse_note_caller_and_column(void)
 {
-    char               line[] = "P101FACT\t6\tNOTE\t/tmp/demo.c\tdemo\t0\t9\tFUNCTION_RETURN\thelper\t17\tc:@F@helper\t40\t50\n";
+    char               line[] = "P101FACT\t7\tNOTE\t/tmp/demo.c\tdemo\t0\t9\tFUNCTION_RETURN\thelper\t17\tc:@F@helper\t40\t50\n";
     struct p101_c_fact fact;
 
     TEST_ASSERT_EQUAL_INT(P101_C_FACT_OK, parse(line, &fact));
@@ -142,8 +150,8 @@ static void test_parse_note_caller_and_column(void)
 
 static void test_parse_enum_facts(void)
 {
-    char               enum_line[]       = "P101FACT\t6\tENUM\t/tmp/demo.h\tdemo\t1\t9\tp101_result\tc:@E@p101_result\n";
-    char               enumerator_line[] = "P101FACT\t6\tENUMERATOR\t/tmp/demo.h\tdemo\t1\t10\tP101_RESULT_OK\tp101_result\tc:@E@p101_result@P101_RESULT_OK\tc:@E@p101_result\n";
+    char               enum_line[]       = "P101FACT\t7\tENUM\t/tmp/demo.h\tdemo\t1\t9\tp101_result\tc:@E@p101_result\n";
+    char               enumerator_line[] = "P101FACT\t7\tENUMERATOR\t/tmp/demo.h\tdemo\t1\t10\tP101_RESULT_OK\tp101_result\tc:@E@p101_result@P101_RESULT_OK\tc:@E@p101_result\n";
     struct p101_c_fact fact;
 
     TEST_ASSERT_EQUAL_INT(P101_C_FACT_OK, parse(enum_line, &fact));
@@ -178,7 +186,7 @@ static void test_bad_version_is_reported(void)
 
 static void test_malformed_fact_is_reported(void)
 {
-    char               line[] = "P101FACT\t6\tFUNCTION\t/tmp/demo.c\tdemo\t0\tline\thelper\t1\t0\n";
+    char               line[] = "P101FACT\t7\tFUNCTION\t/tmp/demo.c\tdemo\t0\tline\thelper\t1\t0\n";
     struct p101_c_fact fact;
 
     TEST_ASSERT_EQUAL_INT(P101_C_FACT_MALFORMED, parse(line, &fact));
@@ -186,7 +194,7 @@ static void test_malformed_fact_is_reported(void)
 
 static void test_non_boolean_flag_is_malformed(void)
 {
-    char               line[] = "P101FACT\t6\tFUNCTION\t/tmp/demo.c\tdemo\t2\t4\thelper\t1\t0\n";
+    char               line[] = "P101FACT\t7\tFUNCTION\t/tmp/demo.c\tdemo\t2\t4\thelper\t1\t0\n";
     struct p101_c_fact fact;
 
     TEST_ASSERT_EQUAL_INT(P101_C_FACT_MALFORMED, parse(line, &fact));
@@ -195,16 +203,16 @@ static void test_non_boolean_flag_is_malformed(void)
 static void test_parse_all_fact_kinds_and_names(void)
 {
     static const char *const lines[] = {
-        "P101FACT\t6\tFILE\t/tmp/demo.c\tdemo\t0\t1\r",
-        "P101FACT\t6\tINCLUDE\t/tmp/demo.c\tdemo\t1\t2\tstdio.h\t1\n",
-        "P101FACT\t6\tFUNCTION\t/tmp/demo.c\tdemo\t0\t3\tmain\t0\t1\tc:@F@main\t0\t0\n",
-        "P101FACT\t6\tCALL\t/tmp/demo.c\tdemo\t0\t4\tputs\t1\t0\t0\tmain\tc:@F@puts\tc:@F@main\t0\t0\n",
-        "P101FACT\t6\tTYPE\t/tmp/demo.c\tdemo\t0\t5\twidget\tc:@S@widget\n",
-        "P101FACT\t6\tENUM\t/tmp/demo.c\tdemo\t0\t6\tresult\tc:@E@result\n",
-        "P101FACT\t6\tENUMERATOR\t/tmp/demo.c\tdemo\t0\t7\tRESULT_OK\tresult\tc:@E@result@RESULT_OK\tc:@E@result\n",
-        "P101FACT\t6\tMACRO\t/tmp/demo.c\tdemo\t0\t8\tLIMIT\t1\t\t0\t0\n",
-        "P101FACT\t6\tNOTE\t/tmp/demo.c\tdemo\t0\t9\tadvice\tmain\t11\tc:@F@main\t0\t0\n",
-        "P101FACT\t6\tNOT-A-KIND\t/tmp/demo.c\tdemo\t0\t10\n",
+        "P101FACT\t7\tFILE\t/tmp/demo.c\tdemo\t0\t1\r",
+        "P101FACT\t7\tINCLUDE\t/tmp/demo.c\tdemo\t1\t2\tstdio.h\t1\t/usr/include/stdio.h\n",
+        "P101FACT\t7\tFUNCTION\t/tmp/demo.c\tdemo\t0\t3\tmain\t0\t1\tc:@F@main\t0\t0\n",
+        "P101FACT\t7\tCALL\t/tmp/demo.c\tdemo\t0\t4\tputs\t1\t0\t0\tmain\tc:@F@puts\tc:@F@main\t0\t0\n",
+        "P101FACT\t7\tTYPE\t/tmp/demo.c\tdemo\t0\t5\twidget\tc:@S@widget\n",
+        "P101FACT\t7\tENUM\t/tmp/demo.c\tdemo\t0\t6\tresult\tc:@E@result\n",
+        "P101FACT\t7\tENUMERATOR\t/tmp/demo.c\tdemo\t0\t7\tRESULT_OK\tresult\tc:@E@result@RESULT_OK\tc:@E@result\n",
+        "P101FACT\t7\tMACRO\t/tmp/demo.c\tdemo\t0\t8\tLIMIT\t1\t\t0\t0\n",
+        "P101FACT\t7\tNOTE\t/tmp/demo.c\tdemo\t0\t9\tadvice\tmain\t11\tc:@F@main\t0\t0\n",
+        "P101FACT\t7\tNOT-A-KIND\t/tmp/demo.c\tdemo\t0\t10\n",
     };
 
     static const enum p101_c_fact_kind kinds[] = {
@@ -244,25 +252,72 @@ static void test_status_names_are_stable(void)
     TEST_ASSERT_EQUAL_STRING("unknown", p101_c_fact_status_name((enum p101_c_fact_status)99));
 }
 
+static void test_note_kind_names_round_trip(void)
+{
+    static const enum p101_c_note_kind kinds[] = {
+        P101_C_NOTE_ENV_CONTRACT,
+        P101_C_NOTE_ERROR_CONTRACT,
+        P101_C_NOTE_ENV_USE,
+        P101_C_NOTE_ERROR_USE,
+        P101_C_NOTE_TRACE_USE,
+        P101_C_NOTE_ERROR_CHECK,
+        P101_C_NOTE_ERROR_OPTIONAL,
+        P101_C_NOTE_ERROR_DISCARD,
+        P101_C_NOTE_ERROR_PROPAGATED,
+        P101_C_NOTE_ERROR_UNCHECKED_CHAIN,
+        P101_C_NOTE_FUNCTION_RETURN,
+        P101_C_NOTE_FUNCTION_EARLY_RETURN,
+        P101_C_NOTE_CALL_NOT_ISOLATED,
+        P101_C_NOTE_CALL_RESULT_DISCARDED,
+        P101_C_NOTE_TERMINATION_ADAPTER,
+        P101_C_NOTE_OWNERSHIP_ERROR_ACQUIRE,
+        P101_C_NOTE_OWNERSHIP_ERROR_RELEASE,
+        P101_C_NOTE_OWNERSHIP_ENV_ACQUIRE,
+        P101_C_NOTE_OWNERSHIP_ENV_RELEASE,
+    };
+
+    for(size_t index = 0U; index < sizeof(kinds) / sizeof(kinds[0]); index++)
+    {
+        const char *name;
+
+        name = p101_c_note_kind_name(kinds[index]);
+        TEST_ASSERT_EQUAL_INT(kinds[index], p101_c_note_kind_from_name(env, name));
+    }
+
+    TEST_ASSERT_EQUAL_STRING("TYPE_SEMANTIC_ROLE:p101:trace-scope", p101_c_note_kind_name(P101_C_NOTE_TRACE_USE));
+    TEST_ASSERT_EQUAL_STRING("OTHER", p101_c_note_kind_name(P101_C_NOTE_OTHER));
+    TEST_ASSERT_EQUAL_STRING("OTHER", p101_c_note_kind_name((enum p101_c_note_kind)99));
+    TEST_ASSERT_EQUAL_STRING("SEMANTIC_ROLE:p101:termination-adapter", p101_c_note_kind_name(P101_C_NOTE_TERMINATION_ADAPTER));
+    TEST_ASSERT_EQUAL_STRING("CALLEE_SEMANTIC_ROLE:p101:ownership:error:acquire", p101_c_note_kind_name(P101_C_NOTE_OWNERSHIP_ERROR_ACQUIRE));
+    TEST_ASSERT_EQUAL_STRING("CALLEE_SEMANTIC_ROLE:p101:ownership:error:release", p101_c_note_kind_name(P101_C_NOTE_OWNERSHIP_ERROR_RELEASE));
+    TEST_ASSERT_EQUAL_STRING("CALLEE_SEMANTIC_ROLE:p101:ownership:env:acquire", p101_c_note_kind_name(P101_C_NOTE_OWNERSHIP_ENV_ACQUIRE));
+    TEST_ASSERT_EQUAL_STRING("CALLEE_SEMANTIC_ROLE:p101:ownership:env:release", p101_c_note_kind_name(P101_C_NOTE_OWNERSHIP_ENV_RELEASE));
+    TEST_ASSERT_EQUAL_INT(P101_C_NOTE_OTHER, p101_c_note_kind_from_name(env, NULL));
+    TEST_ASSERT_EQUAL_INT(P101_C_NOTE_TERMINATION_ADAPTER, p101_c_note_kind_from_name(env, "SEMANTIC_ROLE:p101:termination-adapter"));
+    TEST_ASSERT_EQUAL_INT(P101_C_NOTE_OTHER, p101_c_note_kind_from_name(env, "SEMANTIC_ROLE:p101:not-a-real-role"));
+    TEST_ASSERT_EQUAL_INT(P101_C_NOTE_OTHER, p101_c_note_kind_from_name(env, "OTHER"));
+}
+
 static void test_rejects_invalid_fact_shapes(void)
 {
     static const char *const malformed[] = {
-        "P101FACT\t6\n",
-        "P101FACT\t6\tFILE\t/tmp/demo.c\tdemo\t0\tnot-a-line\n",
-        "P101FACT\t6\tFILE\t/tmp/demo.c\tdemo\tmaybe\t1\n",
-        "P101FACT\t6\tINCLUDE\t/tmp/demo.c\tdemo\t0\t1\tstdio.h\n",
-        "P101FACT\t6\tFUNCTION\t/tmp/demo.c\tdemo\t0\t1\tmain\t1\n",
-        "P101FACT\t6\tCALL\t/tmp/demo.c\tdemo\t0\t1\tputs\t1\n",
-        "P101FACT\t6\tCALL\t/tmp/demo.c\tdemo\t0\t1\tputs\t0\t0\tbad\tmain\tc:@F@puts\tc:@F@main\t0\t0\n",
-        "P101FACT\t6\tTYPE\t/tmp/demo.c\tdemo\t0\t1\n",
-        "P101FACT\t6\tMACRO\t/tmp/demo.c\tdemo\t0\t1\n",
-        "P101FACT\t6\tNOTE\t/tmp/demo.c\tdemo\t0\t1\n",
-        "P101FACT\t6\tFUNCTION\t/tmp/demo.c\tdemo\t0\t1\tmain\tbad\t0\n",
-        "P101FACT\t6\tFUNCTION\t/tmp/demo.c\tdemo\t0\t1\tmain\t1\tbad\n",
-        "P101FACT\t6\tFILE\t/tmp/demo.c\tdemo\t0\t1\ta\tb\tc\td\te\tf\tg\th\ti\tj\n",
+        "P101FACT\t7\n",
+        "P101FACT\t7\tFILE\t/tmp/demo.c\tdemo\t0\tnot-a-line\n",
+        "P101FACT\t7\tFILE\t/tmp/demo.c\tdemo\tmaybe\t1\n",
+        "P101FACT\t7\tINCLUDE\t/tmp/demo.c\tdemo\t0\t1\tstdio.h\n",
+        "P101FACT\t7\tINCLUDE\t/tmp/demo.c\tdemo\t0\t1\tstdio.h\t1\n",
+        "P101FACT\t7\tFUNCTION\t/tmp/demo.c\tdemo\t0\t1\tmain\t1\n",
+        "P101FACT\t7\tCALL\t/tmp/demo.c\tdemo\t0\t1\tputs\t1\n",
+        "P101FACT\t7\tCALL\t/tmp/demo.c\tdemo\t0\t1\tputs\t0\t0\tbad\tmain\tc:@F@puts\tc:@F@main\t0\t0\n",
+        "P101FACT\t7\tTYPE\t/tmp/demo.c\tdemo\t0\t1\n",
+        "P101FACT\t7\tMACRO\t/tmp/demo.c\tdemo\t0\t1\n",
+        "P101FACT\t7\tNOTE\t/tmp/demo.c\tdemo\t0\t1\n",
+        "P101FACT\t7\tFUNCTION\t/tmp/demo.c\tdemo\t0\t1\tmain\tbad\t0\n",
+        "P101FACT\t7\tFUNCTION\t/tmp/demo.c\tdemo\t0\t1\tmain\t1\tbad\n",
+        "P101FACT\t7\tFILE\t/tmp/demo.c\tdemo\t0\t1\ta\tb\tc\td\te\tf\tg\th\ti\tj\n",
     };
     struct p101_c_fact fact;
-    char               valid[] = "P101FACT\t6\tFILE\t/tmp/demo.c\tdemo\t0\t1\n";
+    char               valid[] = "P101FACT\t7\tFILE\t/tmp/demo.c\tdemo\t0\t1\n";
 
     TEST_ASSERT_EQUAL_INT(P101_C_FACT_MALFORMED, p101_c_fact_parse_line(env, error, NULL, &fact));
     TEST_ASSERT_EQUAL_INT(P101_C_FACT_MALFORMED, p101_c_fact_parse_line(env, error, valid, NULL));
@@ -275,7 +330,7 @@ static void test_rejects_invalid_fact_shapes(void)
     }
 
     {
-        char maximum_fields[] = "P101FACT\t6\tUNKNOWN\t/tmp/demo.c\tdemo\t0\t1\tvalue\t0\t1\ta\tb\tc\td\te\tf\n";
+        char maximum_fields[] = "P101FACT\t7\tUNKNOWN\t/tmp/demo.c\tdemo\t0\t1\tvalue\t0\t1\ta\tb\tc\td\te\tf\n";
 
         TEST_ASSERT_EQUAL_INT(P101_C_FACT_MALFORMED, parse(maximum_fields, &fact));
     }
@@ -539,6 +594,7 @@ int main(void)
     RUN_TEST(test_non_boolean_flag_is_malformed);
     RUN_TEST(test_parse_all_fact_kinds_and_names);
     RUN_TEST(test_status_names_are_stable);
+    RUN_TEST(test_note_kind_names_round_trip);
     RUN_TEST(test_rejects_invalid_fact_shapes);
     RUN_TEST(test_finds_versioned_clang_compile_database);
     RUN_TEST(test_compile_database_fallbacks_and_absolute_paths);

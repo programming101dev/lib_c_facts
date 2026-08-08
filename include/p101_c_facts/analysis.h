@@ -45,6 +45,15 @@ extern "C"
         size_t                    start_offset;
         size_t                    end_offset;
         const char               *name;
+        /*
+         * The resolved file path of an INCLUDE directive, as libclang found
+         * it. It is NULL or empty when the header could not be resolved.
+         * is_local_include below is derived from this path: an include is
+         * local when it resolves under an admitted root. Only when resolution
+         * failed does is_local_include fall back to the include delimiter
+         * ("..." is local, <...> is not).
+         */
+        const char               *resolved_include;
         const char               *caller;
         const char               *usr;
         const char               *caller_usr;
@@ -58,7 +67,7 @@ extern "C"
         bool                      is_static;
         bool                      is_public;
         bool                      is_variadic;
-        bool                      is_local_include;
+        bool                      is_local_include; /* See resolved_include. */
         bool                      has_env_parameter;
         bool                      has_error_parameter;
         bool                      is_error_state_query;
@@ -89,6 +98,7 @@ extern "C"
 
     const char *p101_c_analysis_kind_name(enum p101_c_analysis_kind kind);
     const char *p101_c_mutation_kind_name(enum p101_c_mutation_kind kind);
+    bool        p101_c_mutation_kind_from_name(const struct p101_env *env, const char *name, enum p101_c_mutation_kind *kind);
 
 #ifdef __cplusplus
 }
