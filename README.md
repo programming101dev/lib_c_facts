@@ -4,9 +4,9 @@
 record format used by p101 tools that need C project facts without each tool
 inventing its own C parser.
 
-`p101-wrapper-audit` and `p101-c-facts` call the library's acquisition API and
-emit tab-separated records. Consumers, such as `p101-module-map`, parse those
-records through this library. `p101-mutation-check` consumes the same native
+`audit-wrappers` and `audit-facts` call the library's acquisition API and emit
+tab-separated records. Consumers, such as `audit-modules`, parse those
+records through this library. `test-mutation` consumes the same native
 analysis records directly so source extents do not make a text-format
 round-trip.
 
