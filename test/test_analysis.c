@@ -406,16 +406,57 @@ static void test_analysis_and_compile_command(void)
         p101_error_destroy(fault_error);
     }
 
-    TEST_ASSERT_EQUAL_STRING("NOTE", p101_c_analysis_kind_name(P101_C_ANALYSIS_NOTE));
-    TEST_ASSERT_EQUAL_STRING("ENUM", p101_c_analysis_kind_name(P101_C_ANALYSIS_ENUM));
-    TEST_ASSERT_EQUAL_STRING("ENUMERATOR", p101_c_analysis_kind_name(P101_C_ANALYSIS_ENUMERATOR));
-    TEST_ASSERT_EQUAL_STRING("UNKNOWN", p101_c_analysis_kind_name((enum p101_c_analysis_kind)99));
-    TEST_ASSERT_EQUAL_STRING("comparison-boundary", p101_c_mutation_kind_name(P101_C_MUTATION_COMPARISON_BOUNDARY));
-    TEST_ASSERT_EQUAL_STRING("logical-connective", p101_c_mutation_kind_name(P101_C_MUTATION_LOGICAL_CONNECTIVE));
-    TEST_ASSERT_EQUAL_STRING("arithmetic-operator", p101_c_mutation_kind_name(P101_C_MUTATION_ARITHMETIC_OPERATOR));
-    TEST_ASSERT_EQUAL_STRING("error-predicate", p101_c_mutation_kind_name(P101_C_MUTATION_ERROR_PREDICATE));
-    TEST_ASSERT_EQUAL_STRING("skip-call", p101_c_mutation_kind_name(P101_C_MUTATION_SKIP_CALL));
-    TEST_ASSERT_EQUAL_STRING("unknown", p101_c_mutation_kind_name((enum p101_c_mutation_kind)99));
+    {
+        const char *kind_name;
+
+        kind_name = p101_c_analysis_kind_name(P101_C_ANALYSIS_NOTE);
+        TEST_ASSERT_EQUAL_STRING("NOTE", kind_name);
+        kind_name = p101_c_analysis_kind_name(P101_C_ANALYSIS_ENUM);
+        TEST_ASSERT_EQUAL_STRING("ENUM", kind_name);
+        kind_name = p101_c_analysis_kind_name(P101_C_ANALYSIS_ENUMERATOR);
+        TEST_ASSERT_EQUAL_STRING("ENUMERATOR", kind_name);
+        kind_name = p101_c_analysis_kind_name((enum p101_c_analysis_kind)99);
+        TEST_ASSERT_EQUAL_STRING("UNKNOWN", kind_name);
+        kind_name = p101_c_mutation_kind_name(P101_C_MUTATION_COMPARISON_BOUNDARY);
+        TEST_ASSERT_EQUAL_STRING("comparison-boundary", kind_name);
+        kind_name = p101_c_mutation_kind_name(P101_C_MUTATION_LOGICAL_CONNECTIVE);
+        TEST_ASSERT_EQUAL_STRING("logical-connective", kind_name);
+        kind_name = p101_c_mutation_kind_name(P101_C_MUTATION_ARITHMETIC_OPERATOR);
+        TEST_ASSERT_EQUAL_STRING("arithmetic-operator", kind_name);
+        kind_name = p101_c_mutation_kind_name(P101_C_MUTATION_ERROR_PREDICATE);
+        TEST_ASSERT_EQUAL_STRING("error-predicate", kind_name);
+        kind_name = p101_c_mutation_kind_name(P101_C_MUTATION_SKIP_CALL);
+        TEST_ASSERT_EQUAL_STRING("skip-call", kind_name);
+        kind_name = p101_c_mutation_kind_name((enum p101_c_mutation_kind)99);
+        TEST_ASSERT_EQUAL_STRING("unknown", kind_name);
+    }
+
+    /* Every wire name round-trips through the shared table, and text the
+     * writers cannot emit is rejected rather than mapped to a kind. */
+    for(int value = P101_C_MUTATION_NONE; value <= P101_C_MUTATION_SKIP_CALL; value++)
+    {
+        enum p101_c_mutation_kind parsed_kind;
+        const char               *kind_name;
+        bool                      parsed;
+
+        kind_name = p101_c_mutation_kind_name((enum p101_c_mutation_kind)value);
+        parsed    = p101_c_mutation_kind_from_name(env, kind_name, &parsed_kind);
+        TEST_ASSERT_TRUE(parsed);
+        TEST_ASSERT_EQUAL_INT(value, parsed_kind);
+    }
+    {
+        enum p101_c_mutation_kind parsed_kind;
+        bool                      parsed;
+
+        parsed = p101_c_mutation_kind_from_name(env, "unknown", &parsed_kind);
+        TEST_ASSERT_FALSE(parsed);
+        parsed = p101_c_mutation_kind_from_name(env, "", &parsed_kind);
+        TEST_ASSERT_FALSE(parsed);
+        parsed = p101_c_mutation_kind_from_name(env, NULL, &parsed_kind);
+        TEST_ASSERT_FALSE(parsed);
+        parsed = p101_c_mutation_kind_from_name(env, "skip-call", NULL);
+        TEST_ASSERT_FALSE(parsed);
+    }
 
     TEST_ASSERT_EQUAL_INT(0, unlink(database));
     TEST_ASSERT_EQUAL_INT(0, unlink(source));
@@ -431,6 +472,8 @@ static void test_wrapper_conformance_smoke(void)
     const char                    *paths[1];
     struct p101_c_analysis_options options;
     struct analysis_counts         counts;
+    enum p101_c_mutation_kind      parsed_kind;
+    bool                           parsed;
     bool                           command_called;
 
     (void)snprintf(directory, sizeof(directory), "/tmp/p101-c-analysis-conformance-%ld", (long)getpid());
@@ -463,6 +506,9 @@ static void test_wrapper_conformance_smoke(void)
     TEST_ASSERT_TRUE(command_called);
     TEST_ASSERT_EQUAL_STRING("FUNCTION", p101_c_analysis_kind_name(P101_C_ANALYSIS_FUNCTION));
     TEST_ASSERT_EQUAL_STRING("skip-call", p101_c_mutation_kind_name(P101_C_MUTATION_SKIP_CALL));
+    parsed = p101_c_mutation_kind_from_name(env, "skip-call", &parsed_kind);
+    TEST_ASSERT_TRUE(parsed);
+    TEST_ASSERT_EQUAL_INT(P101_C_MUTATION_SKIP_CALL, parsed_kind);
 
     TEST_ASSERT_EQUAL_INT(0, unlink(database));
     TEST_ASSERT_EQUAL_INT(0, unlink(source));

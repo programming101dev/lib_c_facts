@@ -6,4 +6,7 @@ p101_c_fact_parse_line	c:@F@p101_c_fact_parse_line	libraries/lib_c_facts/src/fac
 p101_c_fact_status_name	c:@F@p101_c_fact_status_name	libraries/lib_c_facts/src/facts.c	-	-
 p101_c_facts_find_clang_compile_database	c:@F@p101_c_facts_find_clang_compile_database	libraries/lib_c_facts/src/project.c	-	-
 p101_c_facts_with_compile_command	c:@F@p101_c_facts_with_compile_command	libraries/lib_c_facts/src/compile_command.c	-	-
+p101_c_mutation_kind_from_name	c:@F@p101_c_mutation_kind_from_name	libraries/lib_c_facts/src/analysis.c	-	-
 p101_c_mutation_kind_name	c:@F@p101_c_mutation_kind_name	libraries/lib_c_facts/src/analysis.c	-	-
+p101_c_note_kind_from_name	c:@F@p101_c_note_kind_from_name	libraries/lib_c_facts/src/facts.c	-	-
+p101_c_note_kind_name	c:@F@p101_c_note_kind_name	libraries/lib_c_facts/src/facts.c	-	-

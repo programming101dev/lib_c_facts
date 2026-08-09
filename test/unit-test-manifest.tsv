@@ -6,4 +6,7 @@ p101_c_facts_with_compile_command	c:@F@p101_c_facts_with_compile_command	fault	t
 p101_c_analysis_kind_name	c:@F@p101_c_analysis_kind_name	behavior-existing	test/test_analysis.c
 p101_c_fact_kind_name	c:@F@p101_c_fact_kind_name	behavior-existing	test/test_facts.c
 p101_c_fact_status_name	c:@F@p101_c_fact_status_name	behavior-existing	test/test_facts.c
+p101_c_mutation_kind_from_name	c:@F@p101_c_mutation_kind_from_name	behavior-existing	test/test_analysis.c
 p101_c_mutation_kind_name	c:@F@p101_c_mutation_kind_name	behavior-existing	test/test_analysis.c
+p101_c_note_kind_from_name	c:@F@p101_c_note_kind_from_name	behavior-existing	test/test_facts.c
+p101_c_note_kind_name	c:@F@p101_c_note_kind_name	behavior-existing	test/test_facts.c

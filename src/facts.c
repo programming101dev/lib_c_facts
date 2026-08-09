@@ -396,6 +396,12 @@ enum p101_c_note_kind p101_c_note_kind_from_name(const struct p101_env *env, con
             {"CALLEE_SEMANTIC_ROLE:p101:ownership:error:release", P101_C_NOTE_OWNERSHIP_ERROR_RELEASE},
             {"CALLEE_SEMANTIC_ROLE:p101:ownership:env:acquire",   P101_C_NOTE_OWNERSHIP_ENV_ACQUIRE  },
             {"CALLEE_SEMANTIC_ROLE:p101:ownership:env:release",   P101_C_NOTE_OWNERSHIP_ENV_RELEASE  },
+            {"SIGNATURE_ENV_ORDER",                               P101_C_NOTE_SIGNATURE_ENV_ORDER    },
+            {"FIELD_REACH",                                       P101_C_NOTE_FIELD_REACH            },
+            {"ALLOC_SIZEOF_TYPE",                                 P101_C_NOTE_ALLOC_SIZEOF_TYPE      },
+            {"MACRO_ARGUMENT_BARE",                               P101_C_NOTE_MACRO_ARGUMENT_BARE    },
+            {"MACRO_STATEMENT_BARE",                              P101_C_NOTE_MACRO_STATEMENT_BARE   },
+            {"HANDLER_REGISTERED",                                P101_C_NOTE_HANDLER_REGISTERED     },
         };
 
         for(size_t index = 0U; index < sizeof(mappings) / sizeof(mappings[0]); index++)
@@ -479,6 +485,24 @@ const char *p101_c_note_kind_name(enum p101_c_note_kind kind)
             break;
         case P101_C_NOTE_OWNERSHIP_ENV_RELEASE:
             name = "CALLEE_SEMANTIC_ROLE:p101:ownership:env:release";
+            break;
+        case P101_C_NOTE_SIGNATURE_ENV_ORDER:
+            name = "SIGNATURE_ENV_ORDER";
+            break;
+        case P101_C_NOTE_FIELD_REACH:
+            name = "FIELD_REACH";
+            break;
+        case P101_C_NOTE_ALLOC_SIZEOF_TYPE:
+            name = "ALLOC_SIZEOF_TYPE";
+            break;
+        case P101_C_NOTE_MACRO_ARGUMENT_BARE:
+            name = "MACRO_ARGUMENT_BARE";
+            break;
+        case P101_C_NOTE_MACRO_STATEMENT_BARE:
+            name = "MACRO_STATEMENT_BARE";
+            break;
+        case P101_C_NOTE_HANDLER_REGISTERED:
+            name = "HANDLER_REGISTERED";
             break;
         case P101_C_NOTE_OTHER:
         default:

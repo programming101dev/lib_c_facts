@@ -274,6 +274,12 @@ static void test_note_kind_names_round_trip(void)
         P101_C_NOTE_OWNERSHIP_ERROR_RELEASE,
         P101_C_NOTE_OWNERSHIP_ENV_ACQUIRE,
         P101_C_NOTE_OWNERSHIP_ENV_RELEASE,
+        P101_C_NOTE_SIGNATURE_ENV_ORDER,
+        P101_C_NOTE_FIELD_REACH,
+        P101_C_NOTE_ALLOC_SIZEOF_TYPE,
+        P101_C_NOTE_MACRO_ARGUMENT_BARE,
+        P101_C_NOTE_MACRO_STATEMENT_BARE,
+        P101_C_NOTE_HANDLER_REGISTERED,
     };
 
     for(size_t index = 0U; index < sizeof(kinds) / sizeof(kinds[0]); index++)

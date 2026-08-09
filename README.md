@@ -13,10 +13,11 @@ round-trip.
 ## Record format
 
 ```text
-P101FACT<TAB>6<TAB>kind<TAB>path<TAB>module<TAB>is_header<TAB>line...
+P101FACT<TAB>7<TAB>kind<TAB>path<TAB>module<TAB>is_header<TAB>line...
 ```
 
-The current and only accepted version is `6`. Extra fields depend on `kind`:
+The current and only accepted version is `7`, defined by `P101_C_FACT_VERSION`
+in `include/p101_c_facts/facts.h`. Extra fields depend on `kind`:
 
 | Kind | Extra fields |
 | --- | --- |
