@@ -1126,7 +1126,7 @@ struct optional_error_context
     bool                   found;
 };
 
-static enum CXChildVisitResult find_optional_error_call(CXCursor cursor, CXCursor parent, CXClientData client_data)
+static enum CXChildVisitResult find_optional_error_reference(CXCursor cursor, CXCursor parent, CXClientData client_data)
 {
     struct optional_error_context *context;
     enum CXChildVisitResult        result;
@@ -1135,7 +1135,7 @@ static enum CXChildVisitResult find_optional_error_call(CXCursor cursor, CXCurso
     context = (struct optional_error_context *)client_data;
     result  = CXChildVisit_Recurse;
     kind    = clang_getCursorKind(cursor);
-    if(kind == CXCursor_CallExpr)
+    if(kind == CXCursor_CallExpr || kind == CXCursor_DeclRefExpr)
     {
         CXCursor referenced;
         int      is_null;
@@ -1177,11 +1177,11 @@ static bool call_uses_optional_error(const struct p101_env *env, CXCursor cursor
     argument       = clang_Cursor_getArgument(cursor, argument_index);
     visitor_cursor = argument;
     visitor_parent = clang_getNullCursor();
-    visit_result   = find_optional_error_call(visitor_cursor, visitor_parent, &context);
+    visit_result   = find_optional_error_reference(visitor_cursor, visitor_parent, &context);
     (void)visit_result;
     if(!context.found)
     {
-        clang_visitChildren(argument, find_optional_error_call, &context);
+        clang_visitChildren(argument, find_optional_error_reference, &context);
     }
 
 done:
