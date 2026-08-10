@@ -407,6 +407,16 @@ static void test_compile_database_fallbacks_and_absolute_paths(void)
     TEST_ASSERT_TRUE(p101_c_facts_find_clang_compile_database(env, error, directory, found, sizeof(found)));
     TEST_ASSERT_EQUAL_STRING(fallback_database, found);
 
+    (void)snprintf(build_directory, sizeof(build_directory), "%s/build-clang__clang++__quality-maximal", directory);
+    create_directory(build_directory);
+    (void)snprintf(database, sizeof(database), "%s/compile_commands.json", build_directory);
+    write_text_file(database, "[]\n");
+    write_text_file(last_build, "build-clang__clang++__quality-maximal\n");
+    TEST_ASSERT_TRUE(p101_c_facts_find_clang_compile_database(env, error, directory, found, sizeof(found)));
+    TEST_ASSERT_EQUAL_STRING(database, found);
+    TEST_ASSERT_EQUAL_INT(0, unlink(database));
+    TEST_ASSERT_EQUAL_INT(0, rmdir(build_directory));
+
     write_text_file(last_build, "nested/build-clangx");
     TEST_ASSERT_TRUE(p101_c_facts_find_clang_compile_database(env, error, directory, found, sizeof(found)));
     TEST_ASSERT_EQUAL_STRING(fallback_database, found);

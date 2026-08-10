@@ -49,7 +49,7 @@ static bool is_clang_build_directory(const struct p101_env *env, const char *pat
     base_name  = (separator == NULL) ? path : separator + 1;
     ret_val    = false;
     comparison = p101_strncmp(env, base_name, prefix, sizeof(prefix) - 1U);
-    if(comparison == 0 && (base_name[sizeof(prefix) - 1U] == '\0' || base_name[sizeof(prefix) - 1U] == '-'))
+    if(comparison == 0 && (base_name[sizeof(prefix) - 1U] == '\0' || base_name[sizeof(prefix) - 1U] == '-' || base_name[sizeof(prefix) - 1U] == '_'))
     {
         ret_val = true;
     }
