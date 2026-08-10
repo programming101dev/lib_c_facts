@@ -3075,7 +3075,6 @@ static void emit_signature_notes(struct scan_context *context, CXCursor cursor, 
 {
     int  env_index;
     int  error_index;
-    int  expected_error_index;
     bool misordered;
 
     {
@@ -3108,6 +3107,8 @@ static void emit_signature_notes(struct scan_context *context, CXCursor cursor, 
     }
     else
     {
+        int expected_error_index;
+
         expected_error_index = 0;
         if(env_index == 0)
         {
