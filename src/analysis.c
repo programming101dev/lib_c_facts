@@ -3930,9 +3930,25 @@ static bool scan_directory(const struct p101_env *env, struct p101_error *err, c
         result = false;
     }
     {
-        int close_status;
+        int  close_status;
+        bool had_error_before_close;
 
-        close_status = p101_closedir(env, err, stream);
+        had_error_before_close = p101_error_has_error(err);
+        close_status           = p101_closedir(env, err, stream);
+        /*
+         * A before-call fault leaves the stream owned by this function. Retry
+         * once so the injected failure is reported without leaking that
+         * ownership. When an earlier operation already failed, p101_closedir
+         * closes the stream but preserves that first error by returning -1,
+         * so that path must not be retried.
+         */
+        if(close_status != 0 && !had_error_before_close)
+        {
+            int cleanup_status;
+
+            cleanup_status = p101_closedir(env, err, stream);
+            (void)cleanup_status;
+        }
         if(close_status != 0)
         {
             result = false;
