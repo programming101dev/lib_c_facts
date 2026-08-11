@@ -1339,8 +1339,6 @@ static enum CXChildVisitResult collect_macro_expansion(CXCursor cursor, CXCursor
         if(in_system_header == 0 && context->macro_expansion_count == context->macro_expansion_capacity)
         {
             size_t                        capacity;
-            size_t                        bytes;
-            void                         *allocation;
             struct macro_expansion_range *resized;
 
             capacity = context->macro_expansion_capacity == 0U ? ANALYSIS_INITIAL_MACRO_CAPACITY : context->macro_expansion_capacity * 2U;
@@ -1351,6 +1349,9 @@ static enum CXChildVisitResult collect_macro_expansion(CXCursor cursor, CXCursor
             }
             else
             {
+                size_t bytes;
+                void  *allocation;
+
                 bytes      = capacity * sizeof(*resized);
                 allocation = p101_realloc(context->env, context->err, context->macro_expansions, bytes);
                 resized    = (struct macro_expansion_range *)allocation;
