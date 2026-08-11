@@ -23,11 +23,12 @@
 
 enum
 {
-    ANALYSIS_PATH_SIZE      = 4096,
-    ANALYSIS_NAME_SIZE      = 256,
-    ANALYSIS_IDENTITY_SIZE  = 4096,
-    ANALYSIS_MAX_ARGUMENTS  = 1024,
-    NULL_POINTER_CAST_DEPTH = 8
+    ANALYSIS_PATH_SIZE              = 4096,
+    ANALYSIS_NAME_SIZE              = 256,
+    ANALYSIS_IDENTITY_SIZE          = 4096,
+    ANALYSIS_MAX_ARGUMENTS          = 1024,
+    ANALYSIS_INITIAL_MACRO_CAPACITY = 256,
+    NULL_POINTER_CAST_DEPTH         = 8
 };
 
 static const char P101_ENV_TYPE_USR[]   = "c:@S@p101_env";
@@ -39,6 +40,13 @@ struct cursor_ancestry
 {
     CXCursor                      cursor;
     const struct cursor_ancestry *parent;
+};
+
+struct macro_expansion_range
+{
+    CXFile   file;
+    unsigned start;
+    unsigned end;
 };
 
 struct scan_context
@@ -63,6 +71,9 @@ struct scan_context
     bool                                  stopped;
     bool                                  had_parse_failure;
     const struct cursor_ancestry         *ancestry;
+    struct macro_expansion_range         *macro_expansions;
+    size_t                                macro_expansion_count;
+    size_t                                macro_expansion_capacity;
 };
 
 struct inclusion_context
@@ -109,6 +120,9 @@ static bool                    call_discards_error(CXCursor cursor, unsigned arg
 static bool                    cursor_is_null_pointer_constant(CXCursor cursor);
 static bool                    call_uses_optional_error(const struct p101_env *env, CXCursor cursor, unsigned argument_index);
 static bool                    call_is_generated_by_macro(CXCursor cursor);
+static bool                    call_is_covered_by_macro_expansion(const struct scan_context *context, CXCursor cursor);
+static bool                    call_has_written_invocation(struct scan_context *context, const char *path, size_t start, size_t end);
+static enum CXChildVisitResult collect_macro_expansion(CXCursor cursor, CXCursor parent, CXClientData client_data);
 static bool                    call_is_isolated(struct scan_context *context, CXCursor cursor, CXCursor parent);
 static bool                    binary_parent_is_simple_assignment(CXCursor parent);
 static char                   *cursor_argument_identity(const struct p101_env *env, struct p101_error *err, CXCursor cursor, unsigned index);
@@ -1260,6 +1274,149 @@ static bool call_is_generated_by_macro(CXCursor cursor)
 }
 
 /*
+ * A call cursor created from a function-like macro can inherit the expansion
+ * location for both its spelling and expansion locations.  In that case the
+ * location comparison above cannot establish the cursor's provenance.  Ask
+ * the translation unit which source construct owns the written range: a macro
+ * expansion means the call is compiler-produced implementation detail, not a
+ * call expression written by the student.
+ */
+static bool call_is_covered_by_macro_expansion(const struct scan_context *context, CXCursor cursor)
+{
+    CXSourceRange    range;
+    CXSourceLocation location;
+    CXFile           file;
+    unsigned         start;
+    unsigned         end;
+    bool             covered;
+
+    range    = clang_getCursorExtent(cursor);
+    location = clang_getRangeStart(range);
+    file     = NULL;
+    start    = 0U;
+    end      = 0U;
+    clang_getExpansionLocation(location, &file, NULL, NULL, &start);
+    location = clang_getRangeEnd(range);
+    clang_getExpansionLocation(location, NULL, NULL, NULL, &end);
+    covered = false;
+    for(size_t index = 0U; index < context->macro_expansion_count; index++)
+    {
+        const struct macro_expansion_range *expansion;
+        int                                 same_file;
+
+        expansion = &context->macro_expansions[index];
+        same_file = 0;
+        if(file != NULL && expansion->file != NULL)
+        {
+            same_file = clang_File_isEqual(file, expansion->file);
+        }
+        if(same_file != 0 && start == expansion->start && end == expansion->end)
+        {
+            covered = true;
+            break;
+        }
+    }
+    return covered;
+}
+
+static enum CXChildVisitResult collect_macro_expansion(CXCursor cursor, CXCursor parent, CXClientData client_data)
+{
+    struct scan_context    *context;
+    enum CXCursorKind       kind;
+    enum CXChildVisitResult result;
+
+    context = (struct scan_context *)client_data;
+    kind    = clang_getCursorKind(cursor);
+    if(kind == CXCursor_MacroExpansion)
+    {
+        CXSourceRange    source_range;
+        CXSourceLocation source_start;
+        int              in_system_header;
+
+        source_range     = clang_getCursorExtent(cursor);
+        source_start     = clang_getRangeStart(source_range);
+        in_system_header = clang_Location_isInSystemHeader(source_start);
+        if(in_system_header == 0 && context->macro_expansion_count == context->macro_expansion_capacity)
+        {
+            size_t                        capacity;
+            size_t                        bytes;
+            void                         *allocation;
+            struct macro_expansion_range *resized;
+
+            capacity = context->macro_expansion_capacity == 0U ? ANALYSIS_INITIAL_MACRO_CAPACITY : context->macro_expansion_capacity * 2U;
+            if(capacity < context->macro_expansion_capacity || capacity > SIZE_MAX / sizeof(*resized))
+            {
+                P101_ERROR_RAISE_USER(context->err, "Too many macro expansions in the translation unit.", EOVERFLOW);
+                context->stopped = true;
+            }
+            else
+            {
+                bytes      = capacity * sizeof(*resized);
+                allocation = p101_realloc(context->env, context->err, context->macro_expansions, bytes);
+                resized    = (struct macro_expansion_range *)allocation;
+                if(resized == NULL)
+                {
+                    context->stopped = true;
+                }
+                else
+                {
+                    context->macro_expansions         = resized;
+                    context->macro_expansion_capacity = capacity;
+                }
+            }
+        }
+        if(in_system_header == 0 && !context->stopped)
+        {
+            struct macro_expansion_range *expansion;
+            CXSourceRange                 range;
+            CXSourceLocation              location;
+
+            expansion        = &context->macro_expansions[context->macro_expansion_count++];
+            range            = clang_getCursorExtent(cursor);
+            location         = clang_getRangeStart(range);
+            expansion->file  = NULL;
+            expansion->start = 0U;
+            expansion->end   = 0U;
+            clang_getExpansionLocation(location, &expansion->file, NULL, NULL, &expansion->start);
+            location = clang_getRangeEnd(range);
+            clang_getExpansionLocation(location, NULL, NULL, NULL, &expansion->end);
+        }
+    }
+    (void)parent;
+    result = CXChildVisit_Continue;
+    if(context->stopped)
+    {
+        result = CXChildVisit_Break;
+    }
+    return result;
+}
+
+/*
+ * Some platform headers expose an object-like macro whose expansion contains
+ * a call (notably errno).  libclang does not consistently report distinct
+ * spelling and expansion locations for that hidden call on every platform.
+ * The isolation contract governs calls present in the editable source, so a
+ * call extent with no written invocation parenthesis is macro-generated even
+ * when the location API cannot prove it.
+ */
+static bool call_has_written_invocation(struct scan_context *context, const char *path, size_t start, size_t end)
+{
+    char       *source_text;
+    const char *opening_parenthesis;
+    bool        written;
+
+    source_text = source_range_text(context->env, context->err, context->translation_unit, path, start, end);
+    written     = true;
+    if(source_text != NULL)
+    {
+        opening_parenthesis = p101_strchr(context->env, source_text, '(');
+        written             = opening_parenthesis != NULL;
+    }
+    p101_free(context->env, source_text);
+    return written;
+}
+
+/*
  * The caller has already established that the parent cursor is a
  * BinaryOperator. Ask libclang for the operator itself instead of scanning
  * tokens: a token scan cannot tell "a = helper(b)" from
@@ -1621,10 +1778,20 @@ static void emit_cursor_record(struct scan_context *context, CXCursor cursor, CX
                 bool isolated;
 
                 generated = call_is_generated_by_macro(cursor);
-                isolated  = call_is_isolated(context, cursor, parent);
+                if(!generated)
+                {
+                    generated = call_is_covered_by_macro_expansion(context, cursor);
+                }
+                isolated = call_is_isolated(context, cursor, parent);
                 if(!generated && !isolated)
                 {
-                    emit_note(context, path, line, column, record.start_offset, record.end_offset, record.is_header, "CALL_NOT_ISOLATED");
+                    bool written;
+
+                    written = call_has_written_invocation(context, path, record.start_offset, record.end_offset);
+                    if(written)
+                    {
+                        emit_note(context, path, line, column, record.start_offset, record.end_offset, record.is_header, "CALL_NOT_ISOLATED");
+                    }
                 }
             }
             if(!context->stopped && referenced_is_null == 0)
@@ -3048,8 +3215,16 @@ static bool scan_source(const struct p101_env *env, struct p101_error *err, cons
         CXCursor translation_unit_cursor;
 
         translation_unit_cursor = clang_getTranslationUnitCursor(translation_unit);
-        visit_status            = clang_visitChildren(translation_unit_cursor, visit_cursor, &context);
-        (void)visit_status;
+        if(options->detailed_preprocessing)
+        {
+            visit_status = clang_visitChildren(translation_unit_cursor, collect_macro_expansion, &context);
+            (void)visit_status;
+        }
+        if(!context.stopped)
+        {
+            visit_status = clang_visitChildren(translation_unit_cursor, visit_cursor, &context);
+            (void)visit_status;
+        }
     }
     result       = false;
     has_no_error = p101_error_has_no_error(err);
@@ -3057,6 +3232,7 @@ static bool scan_source(const struct p101_env *env, struct p101_error *err, cons
     {
         result = true;
     }
+    p101_free(env, context.macro_expansions);
     clang_disposeTranslationUnit(translation_unit);
     clang_disposeIndex(index);
     if(changed_directory)

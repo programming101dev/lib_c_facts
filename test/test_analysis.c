@@ -808,14 +808,21 @@ static void test_call_results_must_be_isolated(void)
     (void)snprintf(cxx_source, sizeof(cxx_source), "%s/call-shape.cpp", directory);
     TEST_ASSERT_EQUAL_INT(0, mkdir(directory, 0700));
     write_file(source,
+               "#include <errno.h>\n"
                "static int source(void) { int result; result = 1; return result; }\n"
+               "static int *source_pointer(void) { static int value; return &value; }\n"
                "static int consume(int value) { return value; }\n"
                "static void sink(void) {}\n"
                "#define TRACE_CALL() ((void)sink())\n"
+               "#define CLASSIFY(value) consume(value)\n"
+               "#define EXPANDED_HELPER(value) ((*source_pointer()) + (value))\n"
                "static int good(void) {\n"
                "  int first;\n"
                "  int second = source();\n"
                "  first = source();\n"
+               "  first = errno;\n"
+               "  first = CLASSIFY(first);\n"
+               "  first = EXPANDED_HELPER(first);\n"
                "  sink();\n"
                "  source();\n"
                "  TRACE_CALL();\n"
@@ -906,10 +913,11 @@ static void test_call_results_must_be_isolated(void)
 
     memset(&options, 0, sizeof(options));
     memset(&counts, 0, sizeof(counts));
-    paths[0]           = source;
-    paths[1]           = cxx_source;
-    options.paths      = paths;
-    options.path_count = 2U;
+    paths[0]                       = source;
+    paths[1]                       = cxx_source;
+    options.paths                  = paths;
+    options.path_count             = 2U;
+    options.detailed_preprocessing = true;
     TEST_ASSERT_TRUE(p101_c_analysis_scan(env, error, &options, count_record, &counts));
     TEST_ASSERT_FALSE(p101_error_has_error(error));
     TEST_ASSERT_EQUAL_UINT(12U, counts.call_results_not_isolated);
