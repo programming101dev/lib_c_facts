@@ -794,6 +794,59 @@ static void test_analysis_failures_and_faults(void)
     TEST_ASSERT_EQUAL_INT(0, rmdir(directory));
 }
 
+static void test_analysis_caches_path_admission(void)
+{
+    char                           directory[PATH_SIZE];
+    char                           source[PATH_SIZE];
+    const char                    *paths[1];
+    struct p101_c_analysis_options options;
+    struct analysis_counts         counts;
+    struct fault_state             state;
+    int                            write_status;
+    int                            directory_status;
+    bool                           scan_result;
+    bool                           has_error;
+    int                            unlink_status;
+    int                            remove_status;
+    pid_t                          process_id;
+
+    process_id   = getpid();
+    write_status = snprintf(directory, sizeof(directory), "/tmp/p101-c-analysis-path-cache-%ld", (long)process_id);
+    TEST_ASSERT_GREATER_OR_EQUAL_INT(0, write_status);
+    write_status = snprintf(source, sizeof(source), "%s/cache.c", directory);
+    TEST_ASSERT_GREATER_OR_EQUAL_INT(0, write_status);
+    directory_status = mkdir(directory, 0700);
+    TEST_ASSERT_EQUAL_INT(0, directory_status);
+    write_file(source,
+               "int function_00(void) { return 0; } int value_01; int value_02; int value_03; int value_04;\n"
+               "int value_05; int value_06; int value_07; int value_08; int value_09;\n"
+               "int value_10; int value_11; int value_12; int value_13; int value_14;\n"
+               "int value_15; int value_16; int value_17; int value_18; int value_19;\n");
+
+    memset(&options, 0, sizeof(options));
+    memset(&counts, 0, sizeof(counts));
+    paths[0]           = source;
+    options.paths      = paths;
+    options.path_count = 1U;
+    state.call         = 0U;
+    state.fail_at      = 0U;
+    state.target       = "p101_realpath";
+    p101_env_set_fault_injector(env, fail_selected_call, &state);
+    scan_result = p101_c_analysis_scan(env, error, &options, count_record, &counts);
+    has_error   = p101_error_has_error(error);
+    p101_env_set_fault_injector(env, NULL, NULL);
+
+    TEST_ASSERT_TRUE(scan_result);
+    TEST_ASSERT_FALSE(has_error);
+    TEST_ASSERT_EQUAL_UINT(2U, state.call);
+    TEST_ASSERT_GREATER_THAN_UINT(0U, counts.functions);
+
+    unlink_status = unlink(source);
+    TEST_ASSERT_EQUAL_INT(0, unlink_status);
+    remove_status = rmdir(directory);
+    TEST_ASSERT_EQUAL_INT(0, remove_status);
+}
+
 static void test_call_results_must_be_isolated(void)
 {
     char                           directory[PATH_SIZE];
@@ -987,6 +1040,7 @@ int main(void)
     RUN_TEST(test_directory_analysis_exercises_semantic_records);
     RUN_TEST(test_call_results_must_be_isolated);
     RUN_TEST(test_analysis_failures_and_faults);
+    RUN_TEST(test_analysis_caches_path_admission);
     RUN_TEST(test_invalid_analysis_arguments);
     RUN_TEST(test_clang_error_diagnostic_is_observable);
     return UNITY_END();

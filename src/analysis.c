@@ -28,13 +28,32 @@ enum
     ANALYSIS_IDENTITY_SIZE          = 4096,
     ANALYSIS_MAX_ARGUMENTS          = 1024,
     ANALYSIS_INITIAL_MACRO_CAPACITY = 256,
+    ANALYSIS_INITIAL_PATH_CAPACITY  = 64,
     NULL_POINTER_CAST_DEPTH         = 8
 };
 
-static const char P101_ENV_TYPE_USR[]   = "c:@S@p101_env";
-static const char P101_ERROR_TYPE_USR[] = "c:@S@p101_error";
+static const char   P101_ENV_TYPE_USR[]    = "c:@S@p101_env";
+static const char   P101_ERROR_TYPE_USR[]  = "c:@S@p101_error";
+static const size_t PATH_HASH_OFFSET_BASIS = (size_t)1469598103934665603ULL;
+static const size_t PATH_HASH_PRIME        = (size_t)1099511628211ULL;
 
 typedef char analysis_path[ANALYSIS_PATH_SIZE];
+
+struct path_admission_entry
+{
+    char *path;
+    bool  admitted;
+};
+
+struct analysis_session
+{
+    const struct p101_env                *env;
+    struct p101_error                    *err;
+    const struct p101_c_analysis_options *options;
+    struct path_admission_entry          *path_admissions;
+    size_t                                path_admission_count;
+    size_t                                path_admission_capacity;
+};
 
 struct cursor_ancestry
 {
@@ -54,6 +73,7 @@ struct scan_context
     const struct p101_env                *env;
     struct p101_error                    *err;
     const struct p101_c_analysis_options *options;
+    struct analysis_session              *session;
     p101_c_analysis_observer              observer;
     void                                 *observer_context;
     CXTranslationUnit                     translation_unit;
@@ -88,13 +108,14 @@ struct binary_operands
     unsigned count;
 };
 
-static bool path_is_admitted(const struct p101_env *env, struct p101_error *err, const struct p101_c_analysis_options *options, const char *path);
+static bool path_is_admitted(struct analysis_session *session, const char *path);
+static void path_admission_cache_destroy(struct analysis_session *session);
 static bool path_has_source_suffix(const struct p101_env *env, const char *path);
 static bool path_has_header_suffix(const struct p101_env *env, const char *path);
-static bool scan_source(const struct p101_env *env, struct p101_error *err, const struct p101_c_analysis_options *options, p101_c_analysis_observer observer, void *observer_context, const char *source, const char *directory, const char *const arguments[],
-                        size_t argument_count);
-static bool scan_directory(const struct p101_env *env, struct p101_error *err, const struct p101_c_analysis_options *options, p101_c_analysis_observer observer, void *observer_context, const char *directory);
-static bool scan_compile_database(const struct p101_env *env, struct p101_error *err, const struct p101_c_analysis_options *options, p101_c_analysis_observer observer, void *observer_context);
+static bool scan_source(const struct p101_env *env, struct p101_error *err, const struct p101_c_analysis_options *options, struct analysis_session *session, p101_c_analysis_observer observer, void *observer_context, const char *source, const char *directory,
+                        const char *const arguments[], size_t argument_count);
+static bool scan_directory(const struct p101_env *env, struct p101_error *err, const struct p101_c_analysis_options *options, struct analysis_session *session, p101_c_analysis_observer observer, void *observer_context, const char *directory);
+static bool scan_compile_database(const struct p101_env *env, struct p101_error *err, const struct p101_c_analysis_options *options, struct analysis_session *session, p101_c_analysis_observer observer, void *observer_context);
 static enum CXChildVisitResult visit_cursor(CXCursor cursor, CXCursor parent, CXClientData client_data);
 static void                    visit_inclusion(CXFile included_file, CXSourceLocation *inclusion_stack, unsigned include_length, CXClientData client_data);
 static void                    emit_cursor_record(struct scan_context *context, CXCursor cursor, CXCursor parent);
@@ -275,48 +296,189 @@ p101_single_exit_:
     return p101_single_result_;
 }
 
-static bool path_is_admitted(const struct p101_env *env, struct p101_error *err, const struct p101_c_analysis_options *options, const char *path)
+static size_t path_admission_hash(const char *path)
 {
-    bool        p101_single_result_;
-    size_t      index;
-    char        actual[ANALYSIS_PATH_SIZE];
-    const char *resolved;
-    int         comparison;
+    size_t p101_single_result_;
+    size_t hash;
+    size_t index;
 
-    P101_TRACE_SCOPE(env);
-    resolved = NULL;
-    if(path != NULL && path[0] != '\0')
+    hash  = PATH_HASH_OFFSET_BASIS;
+    index = 0U;
+    while(path[index] != '\0')
     {
-        resolved = p101_realpath(env, err, path, actual);
+        hash ^= (size_t)(unsigned char)path[index];
+        hash *= PATH_HASH_PRIME;
+        index++;
     }
+    p101_single_result_ = hash;
+    goto p101_single_exit_;
+
+p101_single_exit_:
+    return p101_single_result_;
+}
+
+static bool path_admission_cache_reserve(struct analysis_session *session, size_t needed)
+{
+    bool                         p101_single_result_;
+    size_t                       capacity;
+    struct path_admission_entry *entries;
+    void                        *allocation;
+    size_t                       index;
+
+    capacity = session->path_admission_capacity;
+    if(capacity > 0U && needed * 4U < capacity * 3U)
+    {
+        p101_single_result_ = true;
+        goto p101_single_exit_;
+    }
+    if(capacity == 0U)
+    {
+        capacity = ANALYSIS_INITIAL_PATH_CAPACITY;
+    }
+    else
+    {
+        capacity *= 2U;
+    }
+    allocation = p101_calloc(session->env, session->err, capacity, sizeof(*entries));
+    entries    = (struct path_admission_entry *)allocation;
+    if(entries == NULL)
+    {
+        p101_single_result_ = false;
+        goto p101_single_exit_;
+    }
+    for(index = 0U; index < session->path_admission_capacity; index++)
+    {
+        struct path_admission_entry entry;
+        size_t                      slot;
+        size_t                      hash;
+
+        entry = session->path_admissions[index];
+        if(entry.path == NULL)
+        {
+            continue;
+        }
+        hash = path_admission_hash(entry.path);
+        slot = hash & (capacity - 1U);
+        while(entries[slot].path != NULL)
+        {
+            slot = (slot + 1U) & (capacity - 1U);
+        }
+        entries[slot] = entry;
+    }
+    p101_free(session->env, session->path_admissions);
+    session->path_admissions         = entries;
+    session->path_admission_capacity = capacity;
+    p101_single_result_              = true;
+    goto p101_single_exit_;
+
+p101_single_exit_:
+    return p101_single_result_;
+}
+
+static bool path_is_admitted(struct analysis_session *session, const char *path)
+{
+    bool                         p101_single_result_;
+    size_t                       hash;
+    size_t                       slot;
+    struct path_admission_entry *entry;
+    int                          comparison;
+    char                         actual[ANALYSIS_PATH_SIZE];
+    const char                  *resolved;
+    bool                         admitted;
+    size_t                       index;
+    char                        *path_copy;
+    bool                         reserved;
+
+    P101_TRACE_SCOPE(session->env);
+    if(path == NULL || path[0] == '\0')
+    {
+        p101_single_result_ = false;
+        goto p101_single_exit_;
+    }
+    hash = path_admission_hash(path);
+    if(session->path_admission_capacity > 0U)
+    {
+        slot  = hash & (session->path_admission_capacity - 1U);
+        entry = &session->path_admissions[slot];
+        while(entry->path != NULL)
+        {
+            comparison = p101_strcmp(session->env, entry->path, path);
+            if(comparison == 0)
+            {
+                p101_single_result_ = entry->admitted;
+                goto p101_single_exit_;
+            }
+            slot  = (slot + 1U) & (session->path_admission_capacity - 1U);
+            entry = &session->path_admissions[slot];
+        }
+    }
+
+    resolved = p101_realpath(session->env, session->err, path, actual);
     if(resolved == NULL)
     {
         p101_single_result_ = false;
         goto p101_single_exit_;
     }
-    for(index = 0; index < options->path_count; index++)
+    admitted = false;
+    for(index = 0U; index < session->options->path_count; index++)
     {
         const char *root;
         size_t      length;
 
-        root = options->paths[index];
+        root = session->options->paths[index];
         if(root == NULL)
         {
             continue;
         }
-        length     = p101_strlen(env, root);
-        comparison = p101_strncmp(env, actual, root, length);
+        length     = p101_strlen(session->env, root);
+        comparison = p101_strncmp(session->env, actual, root, length);
         if(comparison == 0 && (actual[length] == '\0' || actual[length] == '/'))
         {
-            p101_single_result_ = true;
-            goto p101_single_exit_;
+            admitted = true;
+            break;
         }
     }
-    p101_single_result_ = false;
+    reserved = path_admission_cache_reserve(session, session->path_admission_count + 1U);
+    if(!reserved)
+    {
+        p101_single_result_ = false;
+        goto p101_single_exit_;
+    }
+    path_copy = copy_text(session->env, session->err, path);
+    if(path_copy == NULL)
+    {
+        p101_single_result_ = false;
+        goto p101_single_exit_;
+    }
+    slot  = hash & (session->path_admission_capacity - 1U);
+    entry = &session->path_admissions[slot];
+    while(entry->path != NULL)
+    {
+        slot  = (slot + 1U) & (session->path_admission_capacity - 1U);
+        entry = &session->path_admissions[slot];
+    }
+    entry->path     = path_copy;
+    entry->admitted = admitted;
+    session->path_admission_count++;
+    p101_single_result_ = admitted;
     goto p101_single_exit_;
 
 p101_single_exit_:
     return p101_single_result_;
+}
+
+static void path_admission_cache_destroy(struct analysis_session *session)
+{
+    size_t index;
+
+    for(index = 0U; index < session->path_admission_capacity; index++)
+    {
+        p101_free(session->env, session->path_admissions[index].path);
+    }
+    p101_free(session->env, session->path_admissions);
+    session->path_admissions         = NULL;
+    session->path_admission_count    = 0U;
+    session->path_admission_capacity = 0U;
 }
 
 static bool emit_record(struct scan_context *context, const struct p101_c_analysis_record *record)
@@ -1579,7 +1741,7 @@ static void emit_cursor_record(struct scan_context *context, CXCursor cursor, CX
     admitted = false;
     if(path != NULL)
     {
-        admitted = path_is_admitted(context->env, context->err, context->options, path);
+        admitted = path_is_admitted(context->session, path);
     }
     if(path == NULL || !admitted)
     {
@@ -1622,7 +1784,7 @@ static void emit_cursor_record(struct scan_context *context, CXCursor cursor, CX
                  */
                 if(resolved[0] != '\0')
                 {
-                    local_include = path_is_admitted(context->env, context->err, context->options, resolved);
+                    local_include = path_is_admitted(context->session, resolved);
                 }
                 record.resolved_include = resolved;
                 record.is_local_include = local_include;
@@ -2276,7 +2438,7 @@ static void visit_inclusion(CXFile included_file, CXSourceLocation *inclusion_st
     admitted = false;
     if(path != NULL)
     {
-        admitted = path_is_admitted(context->env, context->err, context->options, path);
+        admitted = path_is_admitted(context->session, path);
     }
     if(path == NULL || !admitted)
     {
@@ -2978,8 +3140,8 @@ p101_single_exit_:
     return p101_single_result_;
 }
 
-static bool scan_source(const struct p101_env *env, struct p101_error *err, const struct p101_c_analysis_options *options, p101_c_analysis_observer observer, void *observer_context, const char *source, const char *directory, const char *const arguments[],
-                        size_t argument_count)
+static bool scan_source(const struct p101_env *env, struct p101_error *err, const struct p101_c_analysis_options *options, struct analysis_session *session, p101_c_analysis_observer observer, void *observer_context, const char *source, const char *directory,
+                        const char *const arguments[], size_t argument_count)
 {
     bool              p101_single_result_;
     CXIndex           index;
@@ -3130,6 +3292,7 @@ static bool scan_source(const struct p101_env *env, struct p101_error *err, cons
         context.env              = env;
         context.err              = err;
         context.options          = options;
+        context.session          = session;
         context.observer         = observer;
         context.observer_context = observer_context;
         result                   = emit_record(&context, &record);
@@ -3154,6 +3317,7 @@ static bool scan_source(const struct p101_env *env, struct p101_error *err, cons
     context.env              = env;
     context.err              = err;
     context.options          = options;
+    context.session          = session;
     context.observer         = observer;
     context.observer_context = observer_context;
     context.translation_unit = translation_unit;
@@ -3777,7 +3941,7 @@ static void emit_field_reach_note(struct scan_context *context, CXCursor cursor,
                 bool owner_admitted;
                 int  same_file;
 
-                owner_admitted = path_is_admitted(context->env, context->err, context->options, owner_path);
+                owner_admitted = path_is_admitted(context->session, owner_path);
                 same_file      = p101_strcmp(context->env, owner_path, path);
                 if(owner_admitted && same_file != 0)
                 {
@@ -3840,7 +4004,8 @@ p101_single_exit_:
     return p101_single_result_;
 }
 
-static bool scan_directory(const struct p101_env *env, struct p101_error *err, const struct p101_c_analysis_options *options, p101_c_analysis_observer observer, void *observer_context, const char *directory)    // NOLINT(misc-no-recursion)
+// NOLINTNEXTLINE(misc-no-recursion) -- directory trees are recursively bounded by the filesystem.
+static bool scan_directory(const struct p101_env *env, struct p101_error *err, const struct p101_c_analysis_options *options, struct analysis_session *session, p101_c_analysis_observer observer, void *observer_context, const char *directory)
 {
     bool           p101_single_result_;
     DIR           *stream;
@@ -3901,7 +4066,7 @@ static bool scan_directory(const struct p101_env *env, struct p101_error *err, c
         header_path     = path_has_header_suffix(env, path);
         if(directory_entry)
         {
-            scan_result = scan_directory(env, err, options, observer, observer_context, path);
+            scan_result = scan_directory(env, err, options, session, observer, observer_context, path);
             if(!scan_result)
             {
                 result = false;
@@ -3914,7 +4079,7 @@ static bool scan_directory(const struct p101_env *env, struct p101_error *err, c
             size_t      default_argument_count;
 
             default_argument_count = sizeof(default_arguments) / sizeof(default_arguments[0]);
-            scan_result            = scan_source(env, err, options, observer, observer_context, path, directory, default_arguments, default_argument_count);
+            scan_result            = scan_source(env, err, options, session, observer, observer_context, path, directory, default_arguments, default_argument_count);
             if(!scan_result)
             {
                 result = false;
@@ -3961,7 +4126,7 @@ p101_single_exit_:
     return p101_single_result_;
 }
 
-static bool scan_compile_database(const struct p101_env *env, struct p101_error *err, const struct p101_c_analysis_options *options, p101_c_analysis_observer observer, void *observer_context)
+static bool scan_compile_database(const struct p101_env *env, struct p101_error *err, const struct p101_c_analysis_options *options, struct analysis_session *session, p101_c_analysis_observer observer, void *observer_context)
 {
     bool                        p101_single_result_;
     char                        database_directory[ANALYSIS_PATH_SIZE];
@@ -4067,14 +4232,14 @@ static bool scan_compile_database(const struct p101_env *env, struct p101_error 
             bool admitted;
             bool source_path;
 
-            admitted    = path_is_admitted(env, err, options, source);
+            admitted    = path_is_admitted(session, source);
             source_path = path_has_source_suffix(env, source);
             if(admitted && source_path)
             {
                 const char *const *argument_view;
 
                 argument_view = (const char *const *)arguments;
-                result        = scan_source(env, err, options, observer, observer_context, source, directory, argument_view, argument_count);
+                result        = scan_source(env, err, options, session, observer, observer_context, source, directory, argument_view, argument_count);
             }
         }
         for(argument_index = 0U; argument_index < argument_count; argument_index++)
@@ -4107,6 +4272,7 @@ bool p101_c_analysis_scan(const struct p101_env *env, struct p101_error *err, co
     bool                           result;
     size_t                         index;
     void                          *allocation;
+    struct analysis_session        session;
 
     P101_TRACE_SCOPE(env);
     P101_WRAPPER_FAULT_SCOPE_RETURN(env, err, result, false);
@@ -4154,10 +4320,14 @@ bool p101_c_analysis_scan(const struct p101_env *env, struct p101_error *err, co
         }
     }
     normalized.paths = normalized_paths;
+    p101_memset(env, &session, 0, sizeof(session));
+    session.env     = env;
+    session.err     = err;
+    session.options = &normalized;
 
     if(normalized.compile_database != NULL)
     {
-        result = scan_compile_database(env, err, &normalized, observer, context);
+        result = scan_compile_database(env, err, &normalized, &session, observer, context);
     }
     else
     {
@@ -4187,7 +4357,7 @@ bool p101_c_analysis_scan(const struct p101_env *env, struct p101_error *err, co
                 header_path    = path_has_header_suffix(env, path);
                 if(directory_path)
                 {
-                    result = scan_directory(env, err, &normalized, observer, context, path);
+                    result = scan_directory(env, err, &normalized, &session, observer, context, path);
                 }
                 else if(regular_path && (source_path || header_path))
                 {
@@ -4195,11 +4365,12 @@ bool p101_c_analysis_scan(const struct p101_env *env, struct p101_error *err, co
                     size_t      default_argument_count;
 
                     default_argument_count = sizeof(default_arguments) / sizeof(default_arguments[0]);
-                    result                 = scan_source(env, err, &normalized, observer, context, path, NULL, default_arguments, default_argument_count);
+                    result                 = scan_source(env, err, &normalized, &session, observer, context, path, NULL, default_arguments, default_argument_count);
                 }
             }
         }
     }
+    path_admission_cache_destroy(&session);
     p101_free(env, path_storage);
     p101_free(env, (void *)normalized_paths);
     P101_WRAPPER_SCOPE_DONE();
