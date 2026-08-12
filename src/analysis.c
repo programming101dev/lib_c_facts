@@ -301,13 +301,19 @@ static size_t path_admission_hash(const char *path)
     size_t p101_single_result_;
     size_t hash;
     size_t index;
+    size_t product;
+    bool   wrapped;
 
     hash  = PATH_HASH_OFFSET_BASIS;
     index = 0U;
     while(path[index] != '\0')
     {
         hash ^= (size_t)(unsigned char)path[index];
-        hash *= PATH_HASH_PRIME;
+        /* FNV-1a requires modulo-size_t multiplication. The overflow builtin
+         * defines that wrap explicitly, including under integer sanitizers. */
+        wrapped = __builtin_mul_overflow(hash, PATH_HASH_PRIME, &product);
+        (void)wrapped;
+        hash = product;
         index++;
     }
     p101_single_result_ = hash;
