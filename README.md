@@ -13,17 +13,18 @@ round-trip.
 ## Record format
 
 ```text
-P101FACT<TAB>7<TAB>kind<TAB>path<TAB>module<TAB>is_header<TAB>line...
+P101FACT<TAB>8<TAB>kind<TAB>path<TAB>module<TAB>is_header<TAB>line...
 ```
 
-The current and only accepted version is `7`, defined by `P101_C_FACT_VERSION`
+The current and only accepted version is `8`, defined by `P101_C_FACT_VERSION`
 in `include/p101_c_facts/facts.h`. Extra fields depend on `kind`:
 
 | Kind | Extra fields |
 | --- | --- |
 | `FILE` | none |
 | `INCLUDE` | `target`, `is_local` |
-| `FUNCTION` | `name`, `is_static`, `is_header_declaration`, `usr`, `start`, `end` |
+| `FUNCTION` | `name`, `is_static`, `is_header_declaration`, `usr`, `start`, `end`, `type`, `return_type`, `is_variadic` |
+| `PARAMETER` | `name`, `type`, `canonical_type`, parent function `usr`, parameter index, `start`, `end` |
 | `CALL` | `name`, `needs_env`, `needs_error`, `is_indirect`, `caller`, `usr`, `caller_usr`, `start`, `end` |
 | `TYPE` | `name`, `usr` |
 | `ENUM` | `name`, `usr` |

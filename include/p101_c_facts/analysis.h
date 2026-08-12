@@ -16,6 +16,7 @@ extern "C"
         P101_C_ANALYSIS_FILE,
         P101_C_ANALYSIS_INCLUDE,
         P101_C_ANALYSIS_FUNCTION,
+        P101_C_ANALYSIS_PARAMETER,
         P101_C_ANALYSIS_CALL,
         P101_C_ANALYSIS_TYPE,
         P101_C_ANALYSIS_ENUM,
@@ -58,10 +59,12 @@ extern "C"
         const char               *usr;
         const char               *caller_usr;
         const char               *type;
+        const char               *canonical_type;
         const char               *return_type;
         const char               *error_argument_identity;
         const char               *replacement;
         enum p101_c_mutation_kind mutation;
+        size_t                    parameter_index;
         bool                      is_header;
         bool                      is_definition;
         bool                      is_static;

@@ -23,6 +23,15 @@ enum
     FACT_FUNCTION_USR_IDX          = 10,
     FACT_FUNCTION_START_IDX        = 11,
     FACT_FUNCTION_END_IDX          = 12,
+    FACT_FUNCTION_TYPE_IDX         = 13,
+    FACT_FUNCTION_RETURN_TYPE_IDX  = 14,
+    FACT_FUNCTION_VARIADIC_IDX     = 15,
+    FACT_PARAMETER_TYPE_IDX        = 8,
+    FACT_PARAMETER_CANONICAL_IDX   = 9,
+    FACT_PARAMETER_PARENT_USR_IDX  = 10,
+    FACT_PARAMETER_INDEX_IDX       = 11,
+    FACT_PARAMETER_START_IDX       = 12,
+    FACT_PARAMETER_END_IDX         = 13,
     FACT_CALL_USR_IDX              = 12,
     FACT_CALLER_USR_IDX            = 13,
     FACT_CALL_START_IDX            = 14,
@@ -46,7 +55,8 @@ enum
     FACT_TYPE_FIELDS               = 9,
     FACT_ENUMERATOR_FIELDS         = 11,
     FACT_MACRO_FIELDS              = 12,
-    FACT_FUNCTION_FIELDS           = 13,
+    FACT_FUNCTION_FIELDS           = 16,
+    FACT_PARAMETER_FIELDS          = 14,
     FACT_CALL_FIELDS               = 16,
     FACT_NOTE_FIELDS               = 13
 };
@@ -164,6 +174,12 @@ enum p101_c_fact_status p101_c_fact_parse_line(const struct p101_env *env, struc
             status = P101_C_FACT_MALFORMED;
             goto done;
         }
+        parsed = parse_fact_bool(env, fields[FACT_FUNCTION_VARIADIC_IDX], &fact->is_variadic);
+        if(!parsed)
+        {
+            status = P101_C_FACT_MALFORMED;
+            goto done;
+        }
     }
     else if(fact->kind == P101_C_FACT_KIND_CALL)
     {
@@ -204,12 +220,37 @@ enum p101_c_fact_status p101_c_fact_parse_line(const struct p101_env *env, struc
     }
     else if(fact->kind == P101_C_FACT_KIND_FUNCTION)
     {
-        fact->usr    = fields[FACT_FUNCTION_USR_IDX];
-        parse_status = p101_record_parse_size(fields[FACT_FUNCTION_START_IDX], &fact->start);
-        parsed       = parse_status != 0;
+        fact->usr         = fields[FACT_FUNCTION_USR_IDX];
+        fact->type        = fields[FACT_FUNCTION_TYPE_IDX];
+        fact->return_type = fields[FACT_FUNCTION_RETURN_TYPE_IDX];
+        parse_status      = p101_record_parse_size(fields[FACT_FUNCTION_START_IDX], &fact->start);
+        parsed            = parse_status != 0;
         if(parsed)
         {
             parse_status = p101_record_parse_size(fields[FACT_FUNCTION_END_IDX], &fact->end);
+            parsed       = parse_status != 0;
+        }
+        if(!parsed)
+        {
+            status = P101_C_FACT_MALFORMED;
+            goto done;
+        }
+    }
+    else if(fact->kind == P101_C_FACT_KIND_PARAMETER)
+    {
+        fact->type           = fields[FACT_PARAMETER_TYPE_IDX];
+        fact->canonical_type = fields[FACT_PARAMETER_CANONICAL_IDX];
+        fact->caller_usr     = fields[FACT_PARAMETER_PARENT_USR_IDX];
+        parse_status         = p101_record_parse_size(fields[FACT_PARAMETER_INDEX_IDX], &fact->parameter_index);
+        parsed               = parse_status != 0;
+        if(parsed)
+        {
+            parse_status = p101_record_parse_size(fields[FACT_PARAMETER_START_IDX], &fact->start);
+            parsed       = parse_status != 0;
+        }
+        if(parsed)
+        {
+            parse_status = p101_record_parse_size(fields[FACT_PARAMETER_END_IDX], &fact->end);
             parsed       = parse_status != 0;
         }
         if(!parsed)
@@ -301,6 +342,9 @@ const char *p101_c_fact_kind_name(enum p101_c_fact_kind kind)
             break;
         case P101_C_FACT_KIND_FUNCTION:
             name = "FUNCTION";
+            break;
+        case P101_C_FACT_KIND_PARAMETER:
+            name = "PARAMETER";
             break;
         case P101_C_FACT_KIND_CALL:
             name = "CALL";
@@ -590,9 +634,10 @@ static enum p101_c_fact_kind parse_kind(const struct p101_env *env, const char *
     }
     else
     {
-        static const char *const names[] = {"INCLUDE", "FUNCTION", "CALL", "TYPE", "ENUM", "ENUMERATOR", "MACRO", "NOTE"};
+        static const char *const names[] = {"INCLUDE", "FUNCTION", "PARAMETER", "CALL", "TYPE", "ENUM", "ENUMERATOR", "MACRO", "NOTE"};
 
-        static const enum p101_c_fact_kind kinds[] = {P101_C_FACT_KIND_INCLUDE, P101_C_FACT_KIND_FUNCTION, P101_C_FACT_KIND_CALL, P101_C_FACT_KIND_TYPE, P101_C_FACT_KIND_ENUM, P101_C_FACT_KIND_ENUMERATOR, P101_C_FACT_KIND_MACRO, P101_C_FACT_KIND_NOTE};
+        static const enum p101_c_fact_kind kinds[] =
+            {P101_C_FACT_KIND_INCLUDE, P101_C_FACT_KIND_FUNCTION, P101_C_FACT_KIND_PARAMETER, P101_C_FACT_KIND_CALL, P101_C_FACT_KIND_TYPE, P101_C_FACT_KIND_ENUM, P101_C_FACT_KIND_ENUMERATOR, P101_C_FACT_KIND_MACRO, P101_C_FACT_KIND_NOTE};
 
         for(size_t index = 0U; index < sizeof(names) / sizeof(names[0]); index++)
         {
@@ -614,6 +659,7 @@ static bool field_count_is_valid(enum p101_c_fact_kind kind, size_t field_count)
         [P101_C_FACT_KIND_FILE]       = FACT_BASE_FIELD_COUNT,
         [P101_C_FACT_KIND_INCLUDE]    = FACT_INCLUDE_FIELDS,
         [P101_C_FACT_KIND_FUNCTION]   = FACT_FUNCTION_FIELDS,
+        [P101_C_FACT_KIND_PARAMETER]  = FACT_PARAMETER_FIELDS,
         [P101_C_FACT_KIND_CALL]       = FACT_CALL_FIELDS,
         [P101_C_FACT_KIND_TYPE]       = FACT_TYPE_FIELDS,
         [P101_C_FACT_KIND_ENUM]       = FACT_TYPE_FIELDS,

@@ -8,7 +8,7 @@
 
 #define P101_C_FACT_TAG "P101FACT"
 #define P101_C_FACT_PREFIX "P101FACT\t"
-#define P101_C_FACT_VERSION "7"
+#define P101_C_FACT_VERSION "8"
 
 #ifdef __cplusplus
 extern "C"
@@ -29,6 +29,7 @@ extern "C"
         P101_C_FACT_KIND_FILE,
         P101_C_FACT_KIND_INCLUDE,
         P101_C_FACT_KIND_FUNCTION,
+        P101_C_FACT_KIND_PARAMETER,
         P101_C_FACT_KIND_CALL,
         P101_C_FACT_KIND_TYPE,
         P101_C_FACT_KIND_ENUM,
@@ -86,7 +87,11 @@ extern "C"
         size_t                column;
         size_t                start;
         size_t                end;
+        size_t                parameter_index;
         char                 *value;
+        char                 *type;
+        char                 *canonical_type;
+        char                 *return_type;
         char                 *caller;
         char                 *usr;
         char                 *caller_usr;
@@ -95,6 +100,7 @@ extern "C"
         bool                  is_static;
         bool                  is_declaration;
         bool                  is_definition;
+        bool                  is_variadic;
         bool                  has_env_parameter;
         bool                  has_error_parameter;
         bool                  is_indirect;

@@ -1710,6 +1710,20 @@ static char *copy_cursor_type_spelling(const struct p101_env *env, struct p101_e
     return text;
 }
 
+static char *copy_cursor_canonical_type_spelling(const struct p101_env *env, struct p101_error *err, CXCursor cursor)
+{
+    CXType   canonical_type;
+    CXType   type;
+    CXString spelling;
+    char    *text;
+
+    type           = clang_getCursorType(cursor);
+    canonical_type = clang_getCanonicalType(type);
+    spelling       = clang_getTypeSpelling(canonical_type);
+    text           = copy_cx_string(env, err, spelling);
+    return text;
+}
+
 static char *copy_cursor_result_type_spelling(const struct p101_env *env, struct p101_error *err, CXCursor cursor)
 {
     CXType   type;
@@ -1722,6 +1736,29 @@ static char *copy_cursor_result_type_spelling(const struct p101_env *env, struct
     return text;
 }
 
+static bool cursor_parameter_index(CXCursor function, CXCursor parameter, size_t *parameter_index)
+{
+    int  argument_count;
+    bool found;
+
+    argument_count = clang_Cursor_getNumArguments(function);
+    found          = false;
+    for(int index = 0; index < argument_count && !found; index++)
+    {
+        CXCursor argument;
+        unsigned equal;
+
+        argument = clang_Cursor_getArgument(function, (unsigned)index);
+        equal    = clang_equalCursors(argument, parameter);
+        if(equal != 0U)
+        {
+            *parameter_index = (size_t)index;
+            found            = true;
+        }
+    }
+    return found;
+}
+
 static void emit_cursor_record(struct scan_context *context, CXCursor cursor, CXCursor parent)
 {
     enum CXCursorKind             cursor_kind;
@@ -1729,6 +1766,7 @@ static void emit_cursor_record(struct scan_context *context, CXCursor cursor, CX
     char                         *path;
     char                         *name;
     char                         *type;
+    char                         *canonical_type;
     char                         *return_type;
     char                         *usr;
     size_t                        line;
@@ -1738,11 +1776,12 @@ static void emit_cursor_record(struct scan_context *context, CXCursor cursor, CX
 
     cursor_kind = clang_getCursorKind(cursor);
     p101_memset(context->env, &record, 0, sizeof(record));
-    path        = NULL;
-    name        = NULL;
-    type        = NULL;
-    return_type = NULL;
-    usr         = NULL;
+    path           = NULL;
+    name           = NULL;
+    type           = NULL;
+    canonical_type = NULL;
+    return_type    = NULL;
+    usr            = NULL;
     cursor_location(context->env, context->err, cursor, &path, &line, &column, &record.start_offset);
     admitted = false;
     if(path != NULL)
@@ -2197,7 +2236,63 @@ static void emit_cursor_record(struct scan_context *context, CXCursor cursor, CX
                 }
             }
         }
-        else if(cursor_kind == CXCursor_ParmDecl || cursor_kind == CXCursor_VarDecl || cursor_kind == CXCursor_MemberRefExpr)
+        else if(cursor_kind == CXCursor_ParmDecl)
+        {
+            enum CXCursorKind parent_kind;
+            CXCursor          function_cursor;
+            CXCursor          parameter_cursor;
+            bool              parent_is_function;
+
+            parent_kind        = clang_getCursorKind(parent);
+            parent_is_function = cursor_kind_is_function(parent_kind);
+            if(parent_is_function)
+            {
+                bool indexed;
+
+                function_cursor  = parent;
+                parameter_cursor = cursor;
+                indexed          = cursor_parameter_index(function_cursor, parameter_cursor, &record.parameter_index);
+                if(indexed)
+                {
+                    record.kind           = P101_C_ANALYSIS_PARAMETER;
+                    name                  = copy_cursor_spelling(context->env, context->err, cursor);
+                    type                  = copy_cursor_type_spelling(context->env, context->err, cursor);
+                    canonical_type        = copy_cursor_canonical_type_spelling(context->env, context->err, cursor);
+                    usr                   = copy_cursor_usr(context->env, context->err, parent);
+                    record.name           = name;
+                    record.type           = type;
+                    record.canonical_type = canonical_type;
+                    record.caller_usr     = usr;
+                    if(name == NULL || type == NULL || canonical_type == NULL || usr == NULL)
+                    {
+                        context->stopped = true;
+                    }
+                    else
+                    {
+                        emitted = emit_record(context, &record);
+                        (void)emitted;
+                    }
+                    if(!context->stopped)
+                    {
+                        bool is_env_pointer;
+                        bool is_error_pointer;
+
+                        emit_type_semantic_roles(context, cursor, &record);
+                        is_env_pointer = cursor_type_is_record_pointer(context->env, cursor, P101_ENV_TYPE_USR);
+                        if(is_env_pointer)
+                        {
+                            emit_note(context, path, line, column, record.start_offset, record.end_offset, record.is_header, "ENV_USE");
+                        }
+                        is_error_pointer = cursor_type_is_record_pointer(context->env, cursor, P101_ERROR_TYPE_USR);
+                        if(!context->stopped && is_error_pointer)
+                        {
+                            emit_note(context, path, line, column, record.start_offset, record.end_offset, record.is_header, "ERROR_USE");
+                        }
+                    }
+                }
+            }
+        }
+        else if(cursor_kind == CXCursor_VarDecl || cursor_kind == CXCursor_MemberRefExpr)
         {
             bool is_env_pointer;
             bool is_error_pointer;
@@ -2221,6 +2316,7 @@ static void emit_cursor_record(struct scan_context *context, CXCursor cursor, CX
     }
 
 p101_single_exit_:
+    p101_free(context->env, canonical_type);
     p101_free(context->env, return_type);
     p101_free(context->env, type);
     p101_free(context->env, usr);
@@ -4400,7 +4496,7 @@ p101_single_exit_:
 const char *p101_c_analysis_kind_name(enum p101_c_analysis_kind kind)
 {
     const char              *p101_single_result_;
-    static const char *const names[] = {"FILE", "INCLUDE", "FUNCTION", "CALL", "TYPE", "ENUM", "ENUMERATOR", "MACRO", "NOTE", "MUTATION", "DIAGNOSTIC"};
+    static const char *const names[] = {"FILE", "INCLUDE", "FUNCTION", "PARAMETER", "CALL", "TYPE", "ENUM", "ENUMERATOR", "MACRO", "NOTE", "MUTATION", "DIAGNOSTIC"};
 
     if(kind < P101_C_ANALYSIS_FILE || kind > P101_C_ANALYSIS_DIAGNOSTIC)
     {

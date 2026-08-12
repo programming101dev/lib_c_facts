@@ -19,6 +19,7 @@ enum
 struct analysis_counts
 {
     size_t functions;
+    size_t parameters;
     size_t calls;
     size_t notes;
     size_t mutations;
@@ -55,6 +56,9 @@ struct analysis_counts
     bool   saw_macro_expansion_extent;
     bool   saw_indirect;
     bool   saw_variadic;
+    bool   saw_typed_parameter;
+    char   function_pointer_parent_usr[PATH_SIZE];
+    size_t function_pointer_parameters;
     bool   saw_annotated_error_query;
     bool   saw_non_query_error_reader;
     bool   saw_function_reference;
@@ -106,8 +110,27 @@ static bool count_record(const struct p101_env *callback_env, struct p101_error 
     counts = (struct analysis_counts *)context;
     if(record->kind == P101_C_ANALYSIS_FUNCTION)
     {
+        int type_comparison;
+
         counts->functions++;
         counts->saw_function_extent = counts->saw_function_extent || record->end_offset > record->start_offset;
+        type_comparison             = strcmp(record->type, "void (void (*)(int))");
+        if(type_comparison == 0)
+        {
+            (void)snprintf(counts->function_pointer_parent_usr, sizeof(counts->function_pointer_parent_usr), "%s", record->usr);
+        }
+    }
+    else if(record->kind == P101_C_ANALYSIS_PARAMETER)
+    {
+        int parent_comparison;
+
+        counts->parameters++;
+        counts->saw_typed_parameter = counts->saw_typed_parameter || (record->type != NULL && record->canonical_type != NULL && record->caller_usr != NULL);
+        parent_comparison           = strcmp(record->caller_usr, counts->function_pointer_parent_usr);
+        if(counts->function_pointer_parent_usr[0] != '\0' && parent_comparison == 0)
+        {
+            counts->function_pointer_parameters++;
+        }
     }
     else if(record->kind == P101_C_ANALYSIS_CALL)
     {
@@ -505,6 +528,7 @@ static void test_wrapper_conformance_smoke(void)
     TEST_ASSERT_TRUE(p101_c_facts_with_compile_command(env, error, database, source, check_command, &command_called));
     TEST_ASSERT_TRUE(command_called);
     TEST_ASSERT_EQUAL_STRING("FUNCTION", p101_c_analysis_kind_name(P101_C_ANALYSIS_FUNCTION));
+    TEST_ASSERT_EQUAL_STRING("PARAMETER", p101_c_analysis_kind_name(P101_C_ANALYSIS_PARAMETER));
     TEST_ASSERT_EQUAL_STRING("skip-call", p101_c_mutation_kind_name(P101_C_MUTATION_SKIP_CALL));
     parsed = p101_c_mutation_kind_from_name(env, "skip-call", &parsed_kind);
     TEST_ASSERT_TRUE(parsed);
@@ -590,6 +614,7 @@ static void test_directory_analysis_exercises_semantic_records(void)
                "  return (unsigned)result;\n"
                "}\n"
                "static int variadic(int first, ...) { return first; }\n"
+               "static void install(void (*handler)(int)) { (void)handler; }\n"
                "static int target(void) { return 1; }\n"
                "static int (*callback)(void) = target;\n"
                "static int demo(const struct p101_env *env, struct p101_error *err, void *memory) {\n"
@@ -658,6 +683,9 @@ static void test_directory_analysis_exercises_semantic_records(void)
     TEST_ASSERT_TRUE(counts.saw_error_propagated);
     TEST_ASSERT_TRUE(counts.saw_indirect);
     TEST_ASSERT_TRUE(counts.saw_variadic);
+    TEST_ASSERT_GREATER_THAN_UINT(0U, counts.parameters);
+    TEST_ASSERT_TRUE(counts.saw_typed_parameter);
+    TEST_ASSERT_EQUAL_UINT(1U, counts.function_pointer_parameters);
     TEST_ASSERT_GREATER_OR_EQUAL_UINT(9U, counts.mutations);
 
     memset(&counts, 0, sizeof(counts));
