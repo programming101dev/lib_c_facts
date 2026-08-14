@@ -139,6 +139,7 @@ static bool                    function_is_error_state_query(const struct p101_e
 static size_t                  function_final_return_start(CXCursor cursor, CXCursor *label);
 static bool                    call_discards_error(CXCursor cursor, unsigned argument_index);
 static bool                    cursor_is_null_pointer_constant(CXCursor cursor);
+static CXCursor                call_referenced_cursor(CXCursor cursor);
 static bool                    call_uses_optional_error(const struct p101_env *env, CXCursor cursor, unsigned argument_index);
 static bool                    call_is_generated_by_macro(CXCursor cursor);
 static bool                    call_is_covered_by_macro_expansion(const struct scan_context *context, CXCursor cursor);
@@ -1302,6 +1303,79 @@ done:
     return is_null;
 }
 
+struct cursor_probe
+{
+    CXCursor cursor;
+    bool     found;
+};
+
+static enum CXChildVisitResult capture_first_cursor(CXCursor cursor, CXCursor parent, CXClientData client_data)
+{
+    struct cursor_probe *probe;
+
+    (void)parent;
+    probe         = (struct cursor_probe *)client_data;
+    probe->cursor = cursor;
+    probe->found  = true;
+    return CXChildVisit_Break;
+}
+
+static enum CXChildVisitResult find_referenced_callee(CXCursor cursor, CXCursor parent, CXClientData client_data)
+{
+    struct cursor_probe    *probe;
+    enum CXChildVisitResult result;
+    enum CXCursorKind       kind;
+
+    (void)parent;
+    probe  = (struct cursor_probe *)client_data;
+    result = CXChildVisit_Recurse;
+    kind   = clang_getCursorKind(cursor);
+    if(kind == CXCursor_DeclRefExpr || kind == CXCursor_MemberRefExpr)
+    {
+        CXCursor referenced;
+        int      is_null;
+
+        referenced = clang_getCursorReferenced(cursor);
+        is_null    = clang_Cursor_isNull(referenced);
+        if(is_null == 0)
+        {
+            probe->cursor = referenced;
+            probe->found  = true;
+            result        = CXChildVisit_Break;
+        }
+    }
+    return result;
+}
+
+static CXCursor call_referenced_cursor(CXCursor cursor)
+{
+    CXCursor            referenced;
+    int                 is_null;
+    struct cursor_probe callee;
+
+    referenced = clang_getCursorReferenced(cursor);
+    is_null    = clang_Cursor_isNull(referenced);
+    if(is_null != 0)
+    {
+        callee.cursor = clang_getNullCursor();
+        callee.found  = false;
+        clang_visitChildren(cursor, capture_first_cursor, &callee);
+        if(callee.found)
+        {
+            struct cursor_probe declaration;
+
+            declaration.cursor = clang_getNullCursor();
+            declaration.found  = false;
+            clang_visitChildren(callee.cursor, find_referenced_callee, &declaration);
+            if(declaration.found)
+            {
+                referenced = declaration.cursor;
+            }
+        }
+    }
+    return referenced;
+}
+
 struct optional_error_context
 {
     const struct p101_env *env;
@@ -1905,7 +1979,7 @@ static void emit_cursor_record(struct scan_context *context, CXCursor cursor, CX
             record.kind             = P101_C_ANALYSIS_CALL;
             record.caller           = context->current_function;
             record.caller_usr       = context->current_function_usr;
-            referenced              = clang_getCursorReferenced(cursor);
+            referenced              = call_referenced_cursor(cursor);
             error_argument_identity = NULL;
             is_error_check          = false;
             discarded_error         = false;

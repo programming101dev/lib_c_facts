@@ -62,6 +62,7 @@ struct analysis_counts
     bool   saw_annotated_error_query;
     bool   saw_non_query_error_reader;
     bool   saw_function_reference;
+    bool   saw_parenthesized_direct_call;
     bool   stop;
     bool   stop_on_call;
 };
@@ -135,7 +136,8 @@ static bool count_record(const struct p101_env *callback_env, struct p101_error 
     else if(record->kind == P101_C_ANALYSIS_CALL)
     {
         counts->calls++;
-        counts->saw_indirect = counts->saw_indirect || record->is_indirect;
+        counts->saw_indirect                  = counts->saw_indirect || record->is_indirect;
+        counts->saw_parenthesized_direct_call = counts->saw_parenthesized_direct_call || (strcmp(record->name, "target") == 0 && !record->is_indirect);
         if(strcmp(record->name, "p101_error_has_error") == 0)
         {
             counts->saw_annotated_error_query = counts->saw_annotated_error_query || record->is_error_state_query;
@@ -632,6 +634,7 @@ static void test_directory_analysis_exercises_semantic_records(void)
                "  p101_first(env, P101_ERROR_OPTIONAL);\n"
                "  value += (1 == 1) + (1 != 2) + (1 < 2) + (1 <= 2) + (2 > 1) + (2 >= 1);\n"
                "  value += p101_error_has_no_error(local_error) ? 1 : 0;\n"
+               "  value += (target)();\n"
                "  switch(value) { case 0: break; default: value += callback(); break; }\n"
                "  p101_free(env, memory);\n"
                "  p101_close(env, local_error, value);\n"
@@ -682,6 +685,7 @@ static void test_directory_analysis_exercises_semantic_records(void)
     TEST_ASSERT_TRUE(counts.saw_error_optional);
     TEST_ASSERT_TRUE(counts.saw_error_propagated);
     TEST_ASSERT_TRUE(counts.saw_indirect);
+    TEST_ASSERT_TRUE(counts.saw_parenthesized_direct_call);
     TEST_ASSERT_TRUE(counts.saw_variadic);
     TEST_ASSERT_GREATER_THAN_UINT(0U, counts.parameters);
     TEST_ASSERT_TRUE(counts.saw_typed_parameter);
