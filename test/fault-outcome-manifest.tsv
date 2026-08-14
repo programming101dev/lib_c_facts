@@ -1,0 +1,5 @@
+function	function_usr	domain	symbol_header	linux_faults	macos_faults	freebsd_faults	posix_faults	linux_conditional	macos_conditional	freebsd_conditional
+p101_c_analysis_scan	c:@F@p101_c_analysis_scan	errno	errno.h	EIO	EIO	EIO	EIO			
+p101_c_fact_parse_line	c:@F@p101_c_fact_parse_line	errno	errno.h	EIO	EIO	EIO	EIO			
+p101_c_facts_find_clang_compile_database	c:@F@p101_c_facts_find_clang_compile_database	errno	errno.h	EIO	EIO	EIO	EIO			
+p101_c_facts_with_compile_command	c:@F@p101_c_facts_with_compile_command	errno	errno.h	EIO	EIO	EIO	EIO			
