@@ -36,6 +36,26 @@ struct analysis_counts
     bool   saw_error_optional;
     bool   saw_error_propagated;
     bool   saw_unchecked_chain;
+    bool   saw_unchecked_output;
+    size_t unchecked_output_count;
+    bool   saw_must_check_discard;
+    bool   saw_cleanup_shadow;
+    bool   saw_partial_discard;
+    bool   saw_uncertain_retry;
+    size_t uncertain_retry_count;
+    bool   saw_condition_wait_outside_loop;
+    bool   saw_post_fork_unsafe_call;
+    bool   saw_zero_size_allocation;
+    bool   saw_overlapping_restricted_copy;
+    bool   saw_thread_automatic_storage_escape;
+    bool   saw_env_borrowed_pointer_invalidated;
+    bool   saw_path_toctou;
+    bool   saw_signal_handler_registered;
+    size_t signal_handler_registration_count;
+    bool   saw_signal_shared_object_access;
+    bool   saw_recursive_call;
+    size_t condition_wait_outside_loop_count;
+    size_t post_fork_unsafe_call_count;
     bool   saw_function_return;
     bool   saw_function_early_return;
     bool   saw_labeled_function_early_return;
@@ -165,9 +185,29 @@ static bool count_record(const struct p101_env *callback_env, struct p101_error 
         {
             counts->error_discards++;
         }
-        counts->saw_error_optional                = counts->saw_error_optional || strcmp(record->name, "ERROR_OPTIONAL") == 0;
-        counts->saw_error_propagated              = counts->saw_error_propagated || strcmp(record->name, "ERROR_PROPAGATED") == 0;
-        counts->saw_unchecked_chain               = counts->saw_unchecked_chain || strcmp(record->name, "ERROR_UNCHECKED_CHAIN") == 0;
+        counts->saw_error_optional     = counts->saw_error_optional || strcmp(record->name, "ERROR_OPTIONAL") == 0;
+        counts->saw_error_propagated   = counts->saw_error_propagated || strcmp(record->name, "ERROR_PROPAGATED") == 0;
+        counts->saw_unchecked_chain    = counts->saw_unchecked_chain || strcmp(record->name, "ERROR_UNCHECKED_CHAIN") == 0;
+        counts->saw_unchecked_output   = counts->saw_unchecked_output || strcmp(record->name, "ERROR_OUTPUT_UNCHECKED") == 0;
+        counts->unchecked_output_count = counts->unchecked_output_count + (strcmp(record->name, "ERROR_OUTPUT_UNCHECKED") == 0 ? 1U : 0U);
+        counts->saw_must_check_discard = counts->saw_must_check_discard || strcmp(record->name, "MUST_CHECK_RESULT_DISCARDED") == 0;
+        counts->saw_cleanup_shadow     = counts->saw_cleanup_shadow || strcmp(record->name, "ERROR_CLEANUP_SHADOW") == 0;
+        counts->saw_partial_discard    = counts->saw_partial_discard || strcmp(record->name, "PARTIAL_RESULT_DISCARDED") == 0;
+        counts->saw_uncertain_retry    = counts->saw_uncertain_retry || strcmp(record->name, "UNCERTAIN_PROGRESS_RETRIED") == 0;
+        counts->uncertain_retry_count += strcmp(record->name, "UNCERTAIN_PROGRESS_RETRIED") == 0 ? 1U : 0U;
+        counts->saw_condition_wait_outside_loop      = counts->saw_condition_wait_outside_loop || strcmp(record->name, "CONDITION_WAIT_OUTSIDE_LOOP") == 0;
+        counts->saw_post_fork_unsafe_call            = counts->saw_post_fork_unsafe_call || strcmp(record->name, "POST_FORK_UNSAFE_CALL") == 0;
+        counts->saw_zero_size_allocation             = counts->saw_zero_size_allocation || strcmp(record->name, "ZERO_SIZE_ALLOCATION") == 0;
+        counts->saw_overlapping_restricted_copy      = counts->saw_overlapping_restricted_copy || strcmp(record->name, "OVERLAPPING_RESTRICTED_COPY") == 0;
+        counts->saw_thread_automatic_storage_escape  = counts->saw_thread_automatic_storage_escape || strcmp(record->name, "THREAD_AUTOMATIC_STORAGE_ESCAPE") == 0;
+        counts->saw_env_borrowed_pointer_invalidated = counts->saw_env_borrowed_pointer_invalidated || strcmp(record->name, "ENV_BORROWED_POINTER_INVALIDATED") == 0;
+        counts->saw_path_toctou                      = counts->saw_path_toctou || strcmp(record->name, "PATH_TOCTOU") == 0;
+        counts->saw_signal_handler_registered        = counts->saw_signal_handler_registered || strcmp(record->name, "SIGNAL_HANDLER_REGISTERED") == 0;
+        counts->signal_handler_registration_count += strcmp(record->name, "SIGNAL_HANDLER_REGISTERED") == 0 ? 1U : 0U;
+        counts->saw_signal_shared_object_access = counts->saw_signal_shared_object_access || strcmp(record->name, "SIGNAL_SHARED_OBJECT_ACCESS") == 0;
+        counts->saw_recursive_call              = counts->saw_recursive_call || strcmp(record->name, "RECURSIVE_CALL") == 0;
+        counts->condition_wait_outside_loop_count += strcmp(record->name, "CONDITION_WAIT_OUTSIDE_LOOP") == 0 ? 1U : 0U;
+        counts->post_fork_unsafe_call_count += strcmp(record->name, "POST_FORK_UNSAFE_CALL") == 0 ? 1U : 0U;
         counts->saw_function_return               = counts->saw_function_return || strcmp(record->name, "FUNCTION_RETURN") == 0;
         counts->saw_function_early_return         = counts->saw_function_early_return || strcmp(record->name, "FUNCTION_EARLY_RETURN") == 0;
         counts->saw_labeled_function_early_return = counts->saw_labeled_function_early_return || (strcmp(record->name, "FUNCTION_EARLY_RETURN") == 0 && record->caller != NULL && strcmp(record->caller, "labeled_return") == 0);
@@ -299,6 +339,45 @@ static void test_analysis_and_compile_command(void)
                "int p101_error_is_reporting(const struct p101_error *err);\n"
                "int p101_first(const struct p101_env *env, struct p101_error *err);\n"
                "int p101_second(const struct p101_env *env, struct p101_error *err);\n"
+               "int must_check(void) __attribute__((annotate(\"p101:result:must-check\")));\n"
+               "int partial(const struct p101_env *env, struct p101_error *err) __attribute__((annotate(\"p101:result:partial\")));\n"
+               "int uncertain(const struct p101_env *env, struct p101_error *err, int resource) __attribute__((annotate(\"p101:progress:uncertain\")));\n"
+               "int progress_resolved(const struct p101_env *env, struct p101_error *err, int resource) __attribute__((annotate(\"p101:progress:resolved\")));\n"
+               "int condition_wait(const struct p101_env *env, struct p101_error *err, int *condition) __attribute__((annotate(\"p101:sync:condition-wait\")));\n"
+               "int cleanup(const struct p101_env *env, struct p101_error *err) __attribute__((annotate(\"p101:cleanup:fallible\")));\n"
+               "int post_fork_safe(void) __attribute__((annotate(\"p101:process:post-fork-safe\")));\n"
+               "int post_fork_unsafe(void);\n"
+               "typedef unsigned long semantic_size_t;\n"
+               "void *malloc(semantic_size_t);\n"
+               "void *memcpy(void *restrict, const void *restrict, semantic_size_t);\n"
+               "int semantic_thread_create(void *, void *) __attribute__((annotate(\"p101:thread:create\")));\n"
+               "char *getenv(const char *);\n"
+               "int setenv(const char *, const char *, int);\n"
+               "int access(const char *, int);\n"
+               "int open(const char *, int, ...);\n"
+               "void (*signal(int, void (*)(int)))(int);\n"
+               "struct semantic_action { void (*callback)(int); int flags; };\n"
+               "int sigaction(int, const struct semantic_action *, struct semantic_action *);\n"
+               "void consume(int value);\n"
+               "static int signal_state;\n"
+               "static void unsafe_signal_output(void);\n"
+               "static void semantic_signal_handler(int value) { signal_state = value; unsafe_signal_output(); }\n"
+               "static int semantic_recursion(int value) { int result = value; if(value > 0) { result = semantic_recursion(value - 1); } return result; }\n"
+               "static void semantic_security_cases(const char *path) {\n"
+               "  char memory[4]; int local = 0; struct semantic_action action;\n"
+               "  void *allocation = malloc(0);\n"
+               "  void *copy_result = memcpy(memory, memory, 1);\n"
+               "  int thread_result = semantic_thread_create(0, &local);\n"
+               "  char *borrowed = getenv(\"P101\");\n"
+               "  int environment_result = setenv(\"P101\", \"1\", 1);\n"
+               "  consume(*borrowed);\n"
+               "  int checked = access(path, 0);\n"
+               "  int descriptor = open(path, 0);\n"
+               "  void (*prior)(int) = signal(2, semantic_signal_handler);\n"
+               "  action.callback = semantic_signal_handler;\n"
+               "  int action_result = sigaction(2, &action, 0);\n"
+               "  consume(allocation != 0); consume(copy_result != 0); consume(thread_result); consume(environment_result); consume(checked); consume(descriptor); consume(prior != 0); consume(action_result); consume(semantic_recursion(local));\n"
+               "}\n"
                "const char *copy_text(struct p101_error *err, const char *value);\n"
                "#define COPY_VALUE(value) do { const char *copy = copy_text(err, (value)); if(copy == 0) return 0; } while(0)\n"
                "static int demo(const struct p101_env *env, struct p101_error *err) {\n"
@@ -309,6 +388,43 @@ static void test_analysis_and_compile_command(void)
                "static int chained(const struct p101_env *env, struct p101_error *err) {\n"
                "  p101_first(env, err);\n"
                "  return p101_second(env, err);\n"
+               "}\n"
+               "static int consumed_before_check(const struct p101_env *env, struct p101_error *err) {\n"
+               "  int value = p101_first(env, err);\n"
+               "  consume(value);\n"
+               "  return 0;\n"
+               "}\n"
+               "static int overwritten_before_use(const struct p101_env *env, struct p101_error *err) {\n"
+               "  int value = p101_first(env, err);\n"
+               "  value = 0;\n"
+               "  consume(value);\n"
+               "  return 0;\n"
+               "}\n"
+               "static int checked_before_use(const struct p101_env *env, struct p101_error *err) {\n"
+               "  int value = p101_first(env, err);\n"
+               "  int failed = p101_error_has_error(err);\n"
+               "  if(!failed) { consume(value); }\n"
+               "  return 0;\n"
+               "}\n"
+               "static int semantic_failures(const struct p101_env *env, struct p101_error *err, int resource, int *condition) {\n"
+               "  int failed;\n"
+               "  must_check();\n"
+               "  partial(env, err);\n"
+               "  uncertain(env, err, resource);\n"
+               "  uncertain(env, err, resource);\n"
+               "  progress_resolved(env, err, resource);\n"
+               "  uncertain(env, err, resource);\n"
+               "  condition_wait(env, err, condition);\n"
+               "  while(*condition) { int wait_result = condition_wait(env, err, condition); consume(wait_result); }\n"
+               "  failed = p101_error_has_error(err);\n"
+               "  cleanup(env, err);\n"
+               "  return failed;\n"
+               "}\n"
+               "static int child_path(void) __attribute__((annotate(\"p101:process:post-fork-child\")));\n"
+               "static int child_path(void) {\n"
+               "  int safe_result = post_fork_safe();\n"
+               "  int unsafe_result = post_fork_unsafe();\n"
+               "  return safe_result + unsafe_result;\n"
                "}\n"
                "static int optional(const struct p101_env *env) {\n"
                "  /* P101_ERROR_OPTIONAL rationale: absence is expected. */\n"
@@ -367,6 +483,26 @@ static void test_analysis_and_compile_command(void)
     TEST_ASSERT_TRUE(counts.saw_error_discard);
     TEST_ASSERT_EQUAL_UINT(1U, counts.error_discards);
     TEST_ASSERT_TRUE(counts.saw_unchecked_chain);
+    TEST_ASSERT_TRUE(counts.saw_unchecked_output);
+    TEST_ASSERT_EQUAL_UINT(1U, counts.unchecked_output_count);
+    TEST_ASSERT_TRUE(counts.saw_must_check_discard);
+    TEST_ASSERT_TRUE(counts.saw_cleanup_shadow);
+    TEST_ASSERT_TRUE(counts.saw_partial_discard);
+    TEST_ASSERT_TRUE(counts.saw_uncertain_retry);
+    TEST_ASSERT_EQUAL_UINT(1U, counts.uncertain_retry_count);
+    TEST_ASSERT_TRUE(counts.saw_condition_wait_outside_loop);
+    TEST_ASSERT_TRUE(counts.saw_post_fork_unsafe_call);
+    TEST_ASSERT_EQUAL_UINT(1U, counts.condition_wait_outside_loop_count);
+    TEST_ASSERT_EQUAL_UINT(1U, counts.post_fork_unsafe_call_count);
+    TEST_ASSERT_TRUE(counts.saw_zero_size_allocation);
+    TEST_ASSERT_TRUE(counts.saw_overlapping_restricted_copy);
+    TEST_ASSERT_TRUE(counts.saw_thread_automatic_storage_escape);
+    TEST_ASSERT_TRUE(counts.saw_env_borrowed_pointer_invalidated);
+    TEST_ASSERT_TRUE(counts.saw_path_toctou);
+    TEST_ASSERT_TRUE(counts.saw_signal_handler_registered);
+    TEST_ASSERT_GREATER_OR_EQUAL_UINT(2U, counts.signal_handler_registration_count);
+    TEST_ASSERT_TRUE(counts.saw_signal_shared_object_access);
+    TEST_ASSERT_TRUE(counts.saw_recursive_call);
 
     command_called = false;
     TEST_ASSERT_TRUE(p101_c_facts_with_compile_command(env, error, database, source, check_command, &command_called));

@@ -37,6 +37,11 @@ static const char   P101_ERROR_TYPE_USR[]  = "c:@S@p101_error";
 static const size_t PATH_HASH_OFFSET_BASIS = (size_t)1469598103934665603ULL;
 static const size_t PATH_HASH_PRIME        = (size_t)1099511628211ULL;
 
+enum
+{
+    SEMANTIC_IDENTITY_CAPACITY = 16
+};
+
 typedef char analysis_path[ANALYSIS_PATH_SIZE];
 
 struct path_admission_entry
@@ -68,6 +73,20 @@ struct macro_expansion_range
     unsigned end;
 };
 
+struct semantic_identity_state
+{
+    char   identity[ANALYSIS_IDENTITY_SIZE];
+    bool   invalidated;
+    size_t invalidated_after;
+};
+
+struct signal_action_binding
+{
+    char owner_identity[ANALYSIS_IDENTITY_SIZE];
+    char handler_name[ANALYSIS_NAME_SIZE];
+    char handler_usr[ANALYSIS_IDENTITY_SIZE];
+};
+
 struct scan_context
 {
     const struct p101_env                *env;
@@ -82,6 +101,10 @@ struct scan_context
     char                                  current_enum[ANALYSIS_NAME_SIZE];
     char                                  current_enum_usr[ANALYSIS_IDENTITY_SIZE];
     char                                  pending_error_identity[ANALYSIS_IDENTITY_SIZE];
+    char                                  pending_result_identity[ANALYSIS_IDENTITY_SIZE];
+    char                                  pending_result_error_identity[ANALYSIS_IDENTITY_SIZE];
+    size_t                                pending_result_end;
+    bool                                  pending_result_reported;
     char                                  checked_error_identity[ANALYSIS_IDENTITY_SIZE];
     unsigned                              conditional_depth;
     size_t                                final_return_start;
@@ -91,6 +114,15 @@ struct scan_context
     bool                                  stopped;
     bool                                  had_parse_failure;
     const struct cursor_ancestry         *ancestry;
+    char                                  uncertain_progress_usr[ANALYSIS_IDENTITY_SIZE];
+    char                                  uncertain_progress_identity[ANALYSIS_IDENTITY_SIZE];
+    bool                                  post_fork_child_function;
+    bool                                  current_recursion_bounded;
+    struct semantic_identity_state        environment_borrows[SEMANTIC_IDENTITY_CAPACITY];
+    size_t                                environment_borrow_count;
+    char                                  checked_path_identity[ANALYSIS_IDENTITY_SIZE];
+    struct signal_action_binding          signal_action_bindings[SEMANTIC_IDENTITY_CAPACITY];
+    size_t                                signal_action_binding_count;
     struct macro_expansion_range         *macro_expansions;
     size_t                                macro_expansion_count;
     size_t                                macro_expansion_capacity;
@@ -132,6 +164,8 @@ static bool                    cursor_is_definition(CXCursor cursor);
 static int                     function_parameter_index(const struct p101_env *env, CXCursor cursor, const char *record_usr);
 static bool                    cursor_type_is_record_pointer(const struct p101_env *env, CXCursor cursor, const char *record_usr);
 static bool                    function_has_semantic_role(const struct p101_env *env, CXCursor cursor, const char *role);
+static bool                    function_result_must_be_checked(const struct p101_env *env, CXCursor cursor);
+static bool                    ancestry_contains_loop(const struct scan_context *context);
 static bool                    semantic_role_function_name(const struct p101_env *env, CXTranslationUnit translation_unit, const char *role, char *name, size_t name_size);
 static void                    emit_function_semantic_roles(struct scan_context *context, CXCursor cursor, const struct p101_c_analysis_record *function);
 static void                    emit_callee_semantic_roles(struct scan_context *context, CXCursor cursor, const struct p101_c_analysis_record *call);
@@ -148,6 +182,16 @@ static enum CXChildVisitResult collect_macro_expansion(CXCursor cursor, CXCursor
 static bool                    call_is_isolated(struct scan_context *context, CXCursor cursor, CXCursor parent);
 static bool                    binary_parent_is_simple_assignment(CXCursor parent);
 static char                   *cursor_argument_identity(const struct p101_env *env, struct p101_error *err, CXCursor cursor, unsigned index);
+static char                   *call_operation_identity(const struct p101_env *env, struct p101_error *err, CXCursor call, CXCursor function);
+static char                   *call_path_identity(const struct p101_env *env, struct p101_error *err, CXCursor call, CXCursor function);
+static bool                    call_result_identity(struct scan_context *context, CXCursor parent, char *identity, size_t identity_size);
+static bool                    result_use_requires_checked_error(struct scan_context *context, CXCursor cursor);
+static bool                    call_has_role_or_usr(const struct p101_env *env, CXCursor function, const char *role, const char *const identities[], size_t identity_count);
+static bool                    cursor_integer_value(CXCursor cursor, int64_t *value);
+static bool                    argument_references_automatic_storage(CXCursor argument);
+static bool                    cursor_is_signal_safe_shared_object(const struct p101_env *env, CXCursor cursor);
+static void                    emit_secure_semantic_call_notes(struct scan_context *context, CXCursor cursor, CXCursor parent, CXCursor referenced, const struct p101_c_analysis_record *record, const char *path, size_t line, size_t column);
+static void                    observe_semantic_reference(struct scan_context *context, CXCursor cursor, const char *path, size_t line, size_t column, size_t start, size_t end, bool is_header);
 static void                    emit_note(struct scan_context *context, const char *path, size_t line, size_t column, size_t start, size_t end, bool is_header, const char *name);
 static void                    emit_note_as(struct scan_context *context, const char *path, size_t line, size_t column, size_t start, size_t end, bool is_header, const char *name, const char *caller, const char *caller_usr);
 static void                    cursor_extent_offsets(CXCursor cursor, size_t *start, size_t *end);
@@ -162,6 +206,7 @@ static bool                    command_argument_is_semantic(const struct p101_en
 static void                    emit_signature_notes(struct scan_context *context, CXCursor cursor, const struct p101_c_analysis_record *record, const char *path, size_t line, size_t column);
 static void                    emit_allocation_notes(struct scan_context *context, CXCursor cursor, const struct p101_c_analysis_record *record, const char *path, size_t line, size_t column);
 static void                    emit_handler_notes(struct scan_context *context, CXCursor cursor, const char *path, size_t line, size_t column, bool is_header);
+static void                    remember_signal_action_binding(struct scan_context *context, CXCursor cursor);
 static void                    emit_macro_hygiene_notes(struct scan_context *context, CXCursor cursor, const struct p101_c_analysis_record *record, const char *path, size_t line, size_t column);
 static void                    emit_field_reach_note(struct scan_context *context, CXCursor cursor, const char *path, size_t line, size_t column, bool is_header);
 static bool                    callee_usr_is_allocator(const struct p101_env *env, const char *usr);
@@ -818,6 +863,33 @@ static bool function_has_semantic_role(const struct p101_env *env, CXCursor curs
     return context.found;
 }
 
+static bool function_result_must_be_checked(const struct p101_env *env, CXCursor cursor)
+{
+    return function_has_semantic_role(env, cursor, "p101:result:must-check");
+}
+
+static bool ancestry_contains_loop(const struct scan_context *context)
+{
+    const struct cursor_ancestry *item;
+    bool                          found;
+
+    found = false;
+    item  = context->ancestry;
+    while(item != NULL)
+    {
+        enum CXCursorKind kind;
+
+        kind = clang_getCursorKind(item->cursor);
+        if(kind == CXCursor_WhileStmt || kind == CXCursor_DoStmt || kind == CXCursor_ForStmt || kind == CXCursor_CXXForRangeStmt)
+        {
+            found = true;
+            break;
+        }
+        item = item->parent;
+    }
+    return found;
+}
+
 struct emit_semantic_role_context
 {
     struct scan_context                 *scan;
@@ -1191,6 +1263,593 @@ static char *cursor_argument_identity(const struct p101_env *env, struct p101_er
 
 done:
     return identity;
+}
+
+static char *call_operation_identity(const struct p101_env *env, struct p101_error *err, CXCursor call, CXCursor function)
+{
+    char *identity;
+    int   argument_count;
+    int   env_index;
+    int   error_index;
+
+    identity       = NULL;
+    argument_count = clang_Cursor_getNumArguments(call);
+    env_index      = function_parameter_index(env, function, P101_ENV_TYPE_USR);
+    error_index    = function_parameter_index(env, function, P101_ERROR_TYPE_USR);
+    for(int index = 0; index < argument_count; index++)
+    {
+        if(index == env_index || index == error_index)
+        {
+            continue;
+        }
+        identity = cursor_argument_identity(env, err, call, (unsigned)index);
+        if(identity != NULL)
+        {
+            break;
+        }
+    }
+    return identity;
+}
+
+static char *call_path_identity(const struct p101_env *env, struct p101_error *err, CXCursor call, CXCursor function)
+{
+    char *identity;
+    int   argument_count;
+    int   env_index;
+    int   error_index;
+
+    identity       = NULL;
+    argument_count = clang_Cursor_getNumArguments(call);
+    env_index      = function_parameter_index(env, function, P101_ENV_TYPE_USR);
+    error_index    = function_parameter_index(env, function, P101_ERROR_TYPE_USR);
+    for(int index = 0; index < argument_count; index++)
+    {
+        CXCursor argument;
+        CXType   raw_type;
+        CXType   type;
+        CXType   raw_pointee;
+        CXType   pointee;
+
+        if(index == env_index || index == error_index)
+        {
+            continue;
+        }
+        argument = clang_Cursor_getArgument(call, (unsigned)index);
+        raw_type = clang_getCursorType(argument);
+        type     = clang_getCanonicalType(raw_type);
+        if(type.kind != CXType_Pointer)
+        {
+            continue;
+        }
+        raw_pointee = clang_getPointeeType(type);
+        pointee     = clang_getCanonicalType(raw_pointee);
+        if(pointee.kind != CXType_Char_S && pointee.kind != CXType_Char_U && pointee.kind != CXType_SChar && pointee.kind != CXType_UChar)
+        {
+            continue;
+        }
+        identity = cursor_argument_identity(env, err, call, (unsigned)index);
+        if(identity != NULL)
+        {
+            break;
+        }
+    }
+    return identity;
+}
+
+static bool declaration_identity(const struct p101_env *env, struct p101_error *err, CXCursor declaration, char *identity, size_t identity_size)
+{
+    enum CXCursorKind kind;
+    CXString          usr_value;
+    const char       *usr;
+    int               written;
+    bool              found;
+
+    kind      = clang_getCursorKind(declaration);
+    usr_value = clang_getCursorUSR(declaration);
+    usr       = clang_getCString(usr_value);
+    found     = usr != NULL && usr[0] != '\0';
+    if(found)
+    {
+        written = p101_snprintf(env, err, identity, identity_size, "%u:%s;", (unsigned)kind, usr);
+        found   = written >= 0 && (size_t)written < identity_size;
+    }
+    clang_disposeString(usr_value);
+    return found;
+}
+
+static bool expression_identity(struct scan_context *context, CXCursor expression, char *identity, size_t identity_size)
+{
+    struct argument_identity_context identity_context;
+    enum CXChildVisitResult          visit_result;
+    bool                             found;
+
+    p101_memset(context->env, &identity_context, 0, sizeof(identity_context));
+    identity_context.env       = context->env;
+    identity_context.err       = context->err;
+    identity_context.text      = identity;
+    identity_context.text_size = identity_size;
+    identity[0]                = '\0';
+    visit_result               = collect_argument_identity(expression, clang_getNullCursor(), &identity_context);
+    if(visit_result == CXChildVisit_Recurse)
+    {
+        clang_visitChildren(expression, collect_argument_identity, &identity_context);
+    }
+    found = identity_context.found && identity[0] != '\0';
+    return found;
+}
+
+static bool call_result_identity(struct scan_context *context, CXCursor parent, char *identity, size_t identity_size)
+{
+    const struct cursor_ancestry *ancestor;
+    enum CXCursorKind             kind;
+    bool                          found;
+
+    ancestor = context->ancestry;
+    kind     = clang_getCursorKind(parent);
+    found    = false;
+    while(kind == CXCursor_UnexposedExpr || kind == CXCursor_CStyleCastExpr)
+    {
+        if(ancestor == NULL)
+        {
+            break;
+        }
+        parent   = ancestor->cursor;
+        ancestor = ancestor->parent;
+        kind     = clang_getCursorKind(parent);
+    }
+    if(kind == CXCursor_VarDecl)
+    {
+        found = declaration_identity(context->env, context->err, parent, identity, identity_size);
+    }
+    else if(kind == CXCursor_BinaryOperator && binary_parent_is_simple_assignment(parent))
+    {
+        struct binary_operands operands;
+
+        operands.count = 0U;
+        operands.left  = clang_getNullCursor();
+        operands.right = clang_getNullCursor();
+        clang_visitChildren(parent, capture_binary_operands, &operands);
+        if(operands.count == 2U)
+        {
+            found = expression_identity(context, operands.left, identity, identity_size);
+        }
+    }
+    return found;
+}
+
+static bool result_use_requires_checked_error(struct scan_context *context, CXCursor cursor)
+{
+    const struct cursor_ancestry *ancestor;
+    bool                          consumed;
+
+    (void)cursor;
+    ancestor = context->ancestry;
+    consumed = false;
+    while(ancestor != NULL)
+    {
+        enum CXCursorKind kind;
+
+        kind = clang_getCursorKind(ancestor->cursor);
+        if(kind == CXCursor_CallExpr || kind == CXCursor_ReturnStmt)
+        {
+            consumed = true;
+            break;
+        }
+        if(kind == CXCursor_IfStmt || kind == CXCursor_SwitchStmt || kind == CXCursor_WhileStmt || kind == CXCursor_DoStmt || kind == CXCursor_ForStmt || kind == CXCursor_ConditionalOperator || kind == CXCursor_CompoundStmt)
+        {
+            break;
+        }
+        ancestor = ancestor->parent;
+    }
+    return consumed;
+}
+
+static bool call_has_role_or_usr(const struct p101_env *env, CXCursor function, const char *role, const char *const identities[], size_t identity_count)
+{
+    bool        found;
+    CXString    usr_value;
+    const char *usr;
+
+    found = function_has_semantic_role(env, function, role);
+    if(found)
+    {
+        return true;
+    }
+    usr_value = clang_getCursorUSR(function);
+    usr       = clang_getCString(usr_value);
+    for(size_t index = 0U; usr != NULL && index < identity_count && !found; index++)
+    {
+        int comparison;
+
+        comparison = p101_strcmp(env, usr, identities[index]);
+        found      = comparison == 0;
+    }
+    clang_disposeString(usr_value);
+    return found;
+}
+
+static bool cursor_integer_value(CXCursor cursor, int64_t *value)
+{
+    CXEvalResult     evaluation;
+    CXEvalResultKind kind;
+    bool             found;
+
+    evaluation = clang_Cursor_Evaluate(cursor);
+    found      = false;
+    if(evaluation != NULL)
+    {
+        kind = clang_EvalResult_getKind(evaluation);
+        if(kind == CXEval_Int)
+        {
+            *value = clang_EvalResult_getAsLongLong(evaluation);
+            found  = true;
+        }
+        clang_EvalResult_dispose(evaluation);
+    }
+    return found;
+}
+
+struct automatic_storage_probe
+{
+    bool found;
+};
+
+static enum CXChildVisitResult probe_automatic_storage(CXCursor cursor, CXCursor parent, CXClientData client_data)
+{
+    struct automatic_storage_probe *probe;
+    enum CXCursorKind               kind;
+
+    (void)parent;
+    probe = (struct automatic_storage_probe *)client_data;
+    kind  = clang_getCursorKind(cursor);
+    if(kind == CXCursor_DeclRefExpr)
+    {
+        CXCursor          declaration;
+        enum CXCursorKind declaration_kind;
+
+        declaration      = clang_getCursorReferenced(cursor);
+        declaration_kind = clang_getCursorKind(declaration);
+        if(declaration_kind == CXCursor_ParmDecl)
+        {
+            probe->found = true;
+            return CXChildVisit_Break;
+        }
+        if(declaration_kind == CXCursor_VarDecl)
+        {
+            CXCursor             semantic_parent;
+            enum CXCursorKind    parent_kind;
+            enum CX_StorageClass storage;
+
+            semantic_parent = clang_getCursorSemanticParent(declaration);
+            parent_kind     = clang_getCursorKind(semantic_parent);
+            storage         = clang_Cursor_getStorageClass(declaration);
+            if(cursor_kind_is_function(parent_kind) && storage != CX_SC_Static)
+            {
+                probe->found = true;
+                return CXChildVisit_Break;
+            }
+        }
+    }
+    return CXChildVisit_Recurse;
+}
+
+static bool argument_references_automatic_storage(CXCursor argument)
+{
+    struct automatic_storage_probe probe;
+    enum CXChildVisitResult        result;
+
+    probe.found = false;
+    result      = probe_automatic_storage(argument, clang_getNullCursor(), &probe);
+    if(result == CXChildVisit_Recurse)
+    {
+        clang_visitChildren(argument, probe_automatic_storage, &probe);
+    }
+    return probe.found;
+}
+
+static bool cursor_is_signal_safe_shared_object(const struct p101_env *env, CXCursor cursor)
+{
+    CXType      type;
+    CXType      canonical;
+    CXType      element;
+    CXCursor    declaration;
+    CXString    usr_value;
+    const char *usr;
+    bool        safe;
+    unsigned    volatile_qualified;
+
+    type      = clang_getCursorType(cursor);
+    canonical = clang_getCanonicalType(type);
+    /*
+     * POSIX admits non-modifiable objects and lock-free atomics.  Const is
+     * visible in the target AST.  Lock freedom is not a property of the C
+     * type alone, so atomic objects need an explicit target-reviewed role.
+     */
+    safe    = clang_isConstQualifiedType(type) != 0U;
+    element = clang_getArrayElementType(type);
+    if(!safe && element.kind != CXType_Invalid)
+    {
+        safe = clang_isConstQualifiedType(element) != 0U;
+    }
+    if(!safe && canonical.kind == CXType_Atomic)
+    {
+        safe = function_has_semantic_role(env, cursor, "p101:signal:lock-free-atomic");
+    }
+    volatile_qualified = clang_isVolatileQualifiedType(type);
+    declaration        = clang_getTypeDeclaration(type);
+    usr_value          = clang_getCursorUSR(declaration);
+    usr                = clang_getCString(usr_value);
+    if(!safe && volatile_qualified != 0U && usr != NULL)
+    {
+        int comparison;
+
+        comparison = p101_strcmp(env, usr, "c:@T@sig_atomic_t");
+        safe       = comparison == 0;
+    }
+    clang_disposeString(usr_value);
+    return safe;
+}
+
+static bool cursor_references_shared_object(CXCursor cursor, CXCursor *declaration)
+{
+    enum CXCursorKind kind;
+    bool              shared;
+
+    shared       = false;
+    *declaration = clang_getNullCursor();
+    kind         = clang_getCursorKind(cursor);
+    if(kind == CXCursor_DeclRefExpr)
+    {
+        enum CXCursorKind declaration_kind;
+
+        *declaration     = clang_getCursorReferenced(cursor);
+        declaration_kind = clang_getCursorKind(*declaration);
+        if(declaration_kind == CXCursor_VarDecl)
+        {
+            CXCursor             semantic_parent;
+            enum CXCursorKind    parent_kind;
+            enum CX_StorageClass storage;
+
+            semantic_parent = clang_getCursorSemanticParent(*declaration);
+            parent_kind     = clang_getCursorKind(semantic_parent);
+            storage         = clang_Cursor_getStorageClass(*declaration);
+            shared          = !cursor_kind_is_function(parent_kind) || storage == CX_SC_Static;
+        }
+    }
+    return shared;
+}
+
+static bool identity_is_environment_borrow(const struct scan_context *context, const char *identity, size_t offset)
+{
+    bool found;
+
+    found = false;
+    for(size_t index = 0U; index < context->environment_borrow_count && !found; index++)
+    {
+        int comparison;
+
+        comparison = p101_strcmp(context->env, context->environment_borrows[index].identity, identity);
+        found      = comparison == 0 && context->environment_borrows[index].invalidated && offset > context->environment_borrows[index].invalidated_after;
+    }
+    return found;
+}
+
+static void observe_semantic_reference(struct scan_context *context, CXCursor cursor, const char *path, size_t line, size_t column, size_t start, size_t end, bool is_header)
+{
+    CXCursor declaration;
+    bool     shared;
+
+    shared = cursor_references_shared_object(cursor, &declaration);
+    if(shared)
+    {
+        bool signal_safe;
+
+        signal_safe = cursor_is_signal_safe_shared_object(context->env, declaration);
+        if(!signal_safe)
+        {
+            emit_note(context, path, line, column, start, end, is_header, "SIGNAL_SHARED_OBJECT_ACCESS");
+        }
+    }
+    if(clang_getCursorKind(cursor) == CXCursor_DeclRefExpr)
+    {
+        char identity[ANALYSIS_IDENTITY_SIZE];
+        bool has_identity;
+
+        has_identity = declaration_identity(context->env, context->err, clang_getCursorReferenced(cursor), identity, sizeof(identity));
+        if(has_identity && identity_is_environment_borrow(context, identity, start))
+        {
+            emit_note(context, path, line, column, start, end, is_header, "ENV_BORROWED_POINTER_INVALIDATED");
+        }
+    }
+}
+
+static void remember_environment_borrow(struct scan_context *context, CXCursor parent)
+{
+    char identity[ANALYSIS_IDENTITY_SIZE];
+    bool found;
+
+    found = call_result_identity(context, parent, identity, sizeof(identity));
+    if(found)
+    {
+        size_t index;
+
+        index = context->environment_borrow_count;
+        for(size_t item = 0U; item < context->environment_borrow_count; item++)
+        {
+            int comparison;
+
+            comparison = p101_strcmp(context->env, context->environment_borrows[item].identity, identity);
+            if(comparison == 0)
+            {
+                index = item;
+                break;
+            }
+        }
+        if(index == context->environment_borrow_count && index < SEMANTIC_IDENTITY_CAPACITY)
+        {
+            context->environment_borrow_count++;
+        }
+        if(index < SEMANTIC_IDENTITY_CAPACITY)
+        {
+            int operation_status;
+
+            operation_status = p101_snprintf(context->env, context->err, context->environment_borrows[index].identity, sizeof(context->environment_borrows[index].identity), "%s", identity);
+            (void)operation_status;
+            context->environment_borrows[index].invalidated       = false;
+            context->environment_borrows[index].invalidated_after = 0U;
+        }
+    }
+}
+
+static void invalidate_environment_borrows(struct scan_context *context, size_t end)
+{
+    for(size_t index = 0U; index < context->environment_borrow_count; index++)
+    {
+        context->environment_borrows[index].invalidated       = true;
+        context->environment_borrows[index].invalidated_after = end;
+    }
+}
+
+static void emit_secure_semantic_call_notes(struct scan_context *context, CXCursor cursor, CXCursor parent, CXCursor referenced, const struct p101_c_analysis_record *record, const char *path, size_t line, size_t column)
+{
+    static const char *const allocators[]               = {"c:@F@malloc", "c:@F@calloc", "c:@F@realloc", "c:@F@aligned_alloc", "c:@F@reallocarray"};
+    static const char *const product_allocators[]       = {"c:@F@calloc", "c:@F@reallocarray"};
+    static const char *const restricted_copies[]        = {"c:@F@memcpy", "c:@F@strcpy", "c:@F@strncpy", "c:@F@strcat", "c:@F@strncat"};
+    static const char *const thread_creators[]          = {"c:@F@pthread_create", "c:@F@thrd_create"};
+    static const char *const environment_getters[]      = {"c:@F@getenv", "c:@F@localeconv", "c:@F@setlocale", "c:@F@strerror"};
+    static const char *const environment_invalidators[] = {"c:@F@setenv", "c:@F@unsetenv", "c:@F@putenv", "c:@F@clearenv", "c:@F@localeconv", "c:@F@setlocale", "c:@F@strerror"};
+    static const char *const path_checks[]              = {"c:@F@access", "c:@F@faccessat", "c:@F@stat", "c:@F@lstat"};
+    static const char *const path_uses[]                = {"c:@F@open", "c:@F@openat", "c:@F@fopen", "c:@F@unlink", "c:@F@rename", "c:@F@chmod", "c:@F@chown", "c:@F@truncate"};
+    int                      argument_count;
+    bool                     classification;
+
+    argument_count = clang_Cursor_getNumArguments(cursor);
+    classification = call_has_role_or_usr(context->env, referenced, "p101:allocation", allocators, sizeof(allocators) / sizeof(allocators[0]));
+    if(classification && argument_count > 0)
+    {
+        bool product_size;
+        bool zero_size;
+        int  first_size_index;
+
+        product_size     = call_has_role_or_usr(context->env, referenced, "p101:allocation:product-size", product_allocators, sizeof(product_allocators) / sizeof(product_allocators[0]));
+        first_size_index = argument_count - 1;
+        if(product_size && argument_count >= 2)
+        {
+            first_size_index = argument_count - 2;
+        }
+        zero_size = false;
+        for(int index = first_size_index; index < argument_count; index++)
+        {
+            CXCursor size_argument;
+            int64_t  value;
+            bool     known;
+
+            size_argument = clang_Cursor_getArgument(cursor, (unsigned)index);
+            known         = cursor_integer_value(size_argument, &value);
+            if(known && value == 0)
+            {
+                zero_size = true;
+            }
+        }
+        if(zero_size)
+        {
+            emit_note(context, path, line, column, record->start_offset, record->end_offset, record->is_header, "ZERO_SIZE_ALLOCATION");
+        }
+    }
+    classification = call_has_role_or_usr(context->env, referenced, "p101:memory:restricted-copy", restricted_copies, sizeof(restricted_copies) / sizeof(restricted_copies[0]));
+    if(classification && argument_count >= 3)
+    {
+        char    *destination;
+        char    *source;
+        CXCursor size_argument;
+        int64_t  size_value;
+        bool     size_known;
+
+        destination   = cursor_argument_identity(context->env, context->err, cursor, (unsigned)(argument_count - 3));
+        source        = cursor_argument_identity(context->env, context->err, cursor, (unsigned)(argument_count - 2));
+        size_argument = clang_Cursor_getArgument(cursor, (unsigned)(argument_count - 1));
+        size_known    = cursor_integer_value(size_argument, &size_value);
+        int same_identity;
+
+        same_identity = 0;
+        if(destination != NULL && source != NULL)
+        {
+            same_identity = p101_strcmp(context->env, destination, source) == 0;
+        }
+        if(same_identity != 0 && (!size_known || size_value > 0))
+        {
+            emit_note(context, path, line, column, record->start_offset, record->end_offset, record->is_header, "OVERLAPPING_RESTRICTED_COPY");
+        }
+        p101_free(context->env, source);
+        p101_free(context->env, destination);
+    }
+    classification = call_has_role_or_usr(context->env, referenced, "p101:thread:create", thread_creators, sizeof(thread_creators) / sizeof(thread_creators[0]));
+    if(classification && argument_count > 0)
+    {
+        CXCursor argument;
+        bool     automatic;
+
+        argument  = clang_Cursor_getArgument(cursor, (unsigned)(argument_count - 1));
+        automatic = argument_references_automatic_storage(argument);
+        if(automatic)
+        {
+            emit_note(context, path, line, column, record->start_offset, record->end_offset, record->is_header, "THREAD_AUTOMATIC_STORAGE_ESCAPE");
+        }
+    }
+    classification = call_has_role_or_usr(context->env, referenced, "p101:environment:invalidates-borrowed", environment_invalidators, sizeof(environment_invalidators) / sizeof(environment_invalidators[0]));
+    if(classification)
+    {
+        invalidate_environment_borrows(context, record->end_offset);
+    }
+    classification = call_has_role_or_usr(context->env, referenced, "p101:environment:borrowed-result", environment_getters, sizeof(environment_getters) / sizeof(environment_getters[0]));
+    if(classification)
+    {
+        remember_environment_borrow(context, parent);
+    }
+    classification = call_has_role_or_usr(context->env, referenced, "p101:filesystem:path-check", path_checks, sizeof(path_checks) / sizeof(path_checks[0]));
+    if(classification)
+    {
+        char *identity;
+
+        identity = call_path_identity(context->env, context->err, cursor, referenced);
+        if(identity != NULL)
+        {
+            int operation_status;
+
+            operation_status = p101_snprintf(context->env, context->err, context->checked_path_identity, sizeof(context->checked_path_identity), "%s", identity);
+            (void)operation_status;
+        }
+        p101_free(context->env, identity);
+    }
+    classification = call_has_role_or_usr(context->env, referenced, "p101:filesystem:path-use", path_uses, sizeof(path_uses) / sizeof(path_uses[0]));
+    if(classification && context->checked_path_identity[0] != '\0')
+    {
+        char *identity;
+
+        identity = call_path_identity(context->env, context->err, cursor, referenced);
+        int comparison;
+
+        comparison = 1;
+        if(identity != NULL)
+        {
+            comparison = p101_strcmp(context->env, identity, context->checked_path_identity);
+        }
+        if(comparison == 0)
+        {
+            emit_note(context, path, line, column, record->start_offset, record->end_offset, record->is_header, "PATH_TOCTOU");
+        }
+        p101_free(context->env, identity);
+    }
+    if(record->usr != NULL && context->current_function_usr != NULL && !context->current_recursion_bounded)
+    {
+        int comparison;
+
+        comparison = p101_strcmp(context->env, record->usr, context->current_function_usr);
+        if(comparison == 0)
+        {
+            emit_note(context, path, line, column, record->start_offset, record->end_offset, record->is_header, "RECURSIVE_CALL");
+        }
+    }
 }
 
 static bool call_discards_error(CXCursor cursor, unsigned argument_index)
@@ -2080,6 +2739,7 @@ static void emit_cursor_record(struct scan_context *context, CXCursor cursor, CX
             {
                 emit_allocation_notes(context, cursor, &record, path, line, column);
                 emit_handler_notes(context, cursor, path, line, column, record.is_header);
+                emit_secure_semantic_call_notes(context, cursor, parent, referenced, &record, path, line, column);
             }
             if(!context->stopped)
             {
@@ -2097,7 +2757,53 @@ static void emit_cursor_record(struct scan_context *context, CXCursor cursor, CX
                 if(result_discarded)
                 {
                     emit_note(context, path, line, column, record.start_offset, record.end_offset, record.is_header, "CALL_RESULT_DISCARDED");
+                    if(referenced_is_null == 0 && function_result_must_be_checked(context->env, referenced))
+                    {
+                        emit_note(context, path, line, column, record.start_offset, record.end_offset, record.is_header, "MUST_CHECK_RESULT_DISCARDED");
+                    }
+                    if(referenced_is_null == 0 && function_has_semantic_role(context->env, referenced, "p101:result:partial"))
+                    {
+                        emit_note(context, path, line, column, record.start_offset, record.end_offset, record.is_header, "PARTIAL_RESULT_DISCARDED");
+                    }
                 }
+            }
+            if(!context->stopped && referenced_is_null == 0 && function_has_semantic_role(context->env, referenced, "p101:progress:resolved"))
+            {
+                context->uncertain_progress_usr[0]      = '\0';
+                context->uncertain_progress_identity[0] = '\0';
+            }
+            if(!context->stopped && referenced_is_null == 0 && function_has_semantic_role(context->env, referenced, "p101:progress:uncertain"))
+            {
+                char *operation_identity;
+                int   same_call;
+                int   same_operation;
+
+                operation_identity = call_operation_identity(context->env, context->err, cursor, referenced);
+                same_call          = context->uncertain_progress_usr[0] == '\0' ? 1 : p101_strcmp(context->env, context->uncertain_progress_usr, record.usr);
+                same_operation     = 1;
+                if(operation_identity != NULL && context->uncertain_progress_identity[0] != '\0')
+                {
+                    same_operation = p101_strcmp(context->env, context->uncertain_progress_identity, operation_identity);
+                }
+                if(same_call == 0 && same_operation == 0)
+                {
+                    emit_note(context, path, line, column, record.start_offset, record.end_offset, record.is_header, "UNCERTAIN_PROGRESS_RETRIED");
+                }
+                p101_snprintf(context->env, context->err, context->uncertain_progress_usr, sizeof(context->uncertain_progress_usr), "%s", record.usr);
+                context->uncertain_progress_identity[0] = '\0';
+                if(operation_identity != NULL)
+                {
+                    p101_snprintf(context->env, context->err, context->uncertain_progress_identity, sizeof(context->uncertain_progress_identity), "%s", operation_identity);
+                }
+                p101_free(context->env, operation_identity);
+            }
+            if(!context->stopped && referenced_is_null == 0 && function_has_semantic_role(context->env, referenced, "p101:sync:condition-wait") && !ancestry_contains_loop(context))
+            {
+                emit_note(context, path, line, column, record.start_offset, record.end_offset, record.is_header, "CONDITION_WAIT_OUTSIDE_LOOP");
+            }
+            if(!context->stopped && referenced_is_null == 0 && context->post_fork_child_function && !function_has_semantic_role(context->env, referenced, "p101:process:post-fork-safe"))
+            {
+                emit_note(context, path, line, column, record.start_offset, record.end_offset, record.is_header, "POST_FORK_UNSAFE_CALL");
             }
             if(!context->stopped && referenced_is_null == 0)
             {
@@ -2122,6 +2828,18 @@ static void emit_cursor_record(struct scan_context *context, CXCursor cursor, CX
                 {
                     context->pending_error_identity[0] = '\0';
                 }
+                comparison = 1;
+                if(checked_error_identity != NULL)
+                {
+                    comparison = p101_strcmp(context->env, context->pending_result_error_identity, checked_error_identity);
+                }
+                if(checked_error_identity != NULL && comparison == 0)
+                {
+                    context->pending_result_identity[0]       = '\0';
+                    context->pending_result_error_identity[0] = '\0';
+                    context->pending_result_end               = 0U;
+                    context->pending_result_reported          = false;
+                }
                 if(checked_error_identity != NULL)
                 {
                     p101_snprintf(context->env, context->err, context->checked_error_identity, sizeof(context->checked_error_identity), "%s", checked_error_identity);
@@ -2144,6 +2862,16 @@ static void emit_cursor_record(struct scan_context *context, CXCursor cursor, CX
                 {
                     emit_note(context, path, line, column, record.start_offset, record.end_offset, record.is_header, "ERROR_OPTIONAL");
                 }
+                if(!optional_error && referenced_is_null == 0 && function_has_semantic_role(context->env, referenced, "p101:cleanup:fallible") && error_argument_identity != NULL && context->checked_error_identity[0] != '\0')
+                {
+                    int same_error;
+
+                    same_error = p101_strcmp(context->env, context->checked_error_identity, error_argument_identity);
+                    if(same_error == 0)
+                    {
+                        emit_note(context, path, line, column, record.start_offset, record.end_offset, record.is_header, "ERROR_CLEANUP_SHADOW");
+                    }
+                }
             }
             if(!context->stopped && context->inside_return)
             {
@@ -2163,6 +2891,13 @@ static void emit_cursor_record(struct scan_context *context, CXCursor cursor, CX
                     emit_note(context, path, line, column, record.start_offset, record.end_offset, record.is_header, "ERROR_UNCHECKED_CHAIN");
                 }
                 p101_snprintf(context->env, context->err, context->pending_error_identity, sizeof(context->pending_error_identity), "%s", error_argument_identity);
+                context->pending_result_identity[0] = '\0';
+                if(call_result_identity(context, parent, context->pending_result_identity, sizeof(context->pending_result_identity)))
+                {
+                    p101_snprintf(context->env, context->err, context->pending_result_error_identity, sizeof(context->pending_result_error_identity), "%s", error_argument_identity);
+                    context->pending_result_end      = record.end_offset;
+                    context->pending_result_reported = false;
+                }
             }
             emit_mutation_record(context, cursor, parent, path, line, column);
             p101_free(context->env, error_argument_identity);
@@ -2215,6 +2950,23 @@ static void emit_cursor_record(struct scan_context *context, CXCursor cursor, CX
             {
                 emitted = emit_record(context, &record);
                 (void)emitted;
+                if(record.is_header)
+                {
+                    char      value_note[ANALYSIS_NAME_SIZE];
+                    long long enum_value;
+                    int       value_status;
+
+                    enum_value   = clang_getEnumConstantDeclValue(cursor);
+                    value_status = p101_snprintf(context->env, context->err, value_note, sizeof(value_note), "API_ENUMERATOR_VALUE:%lld", enum_value);
+                    if(value_status >= 0 && (size_t)value_status < sizeof(value_note))
+                    {
+                        emit_note_as(context, path, line, column, record.start_offset, record.end_offset, true, value_note, record.name, record.usr);
+                    }
+                    else
+                    {
+                        context->stopped = true;
+                    }
+                }
             }
         }
         else if(cursor_kind == CXCursor_TypedefDecl || cursor_kind == CXCursor_StructDecl || cursor_kind == CXCursor_UnionDecl)
@@ -2232,6 +2984,27 @@ static void emit_cursor_record(struct scan_context *context, CXCursor cursor, CX
             {
                 emitted = emit_record(context, &record);
                 (void)emitted;
+                if(record.is_header && cursor_is_definition(cursor) && (cursor_kind == CXCursor_StructDecl || cursor_kind == CXCursor_UnionDecl))
+                {
+                    CXType    layout_type;
+                    long long byte_size;
+                    long long byte_alignment;
+                    char      layout_note[ANALYSIS_NAME_SIZE];
+                    int       layout_status;
+
+                    layout_type    = clang_getCursorType(cursor);
+                    byte_size      = clang_Type_getSizeOf(layout_type);
+                    byte_alignment = clang_Type_getAlignOf(layout_type);
+                    layout_status  = p101_snprintf(context->env, context->err, layout_note, sizeof(layout_note), "API_TYPE_LAYOUT:%lld:%lld", byte_size, byte_alignment);
+                    if(layout_status >= 0 && (size_t)layout_status < sizeof(layout_note))
+                    {
+                        emit_note_as(context, path, line, column, record.start_offset, record.end_offset, true, layout_note, record.name, record.usr);
+                    }
+                    else
+                    {
+                        context->stopped = true;
+                    }
+                }
             }
         }
         else if(cursor_kind == CXCursor_MacroDefinition)
@@ -2250,6 +3023,43 @@ static void emit_cursor_record(struct scan_context *context, CXCursor cursor, CX
                 emitted = emit_record(context, &record);
                 (void)emitted;
                 emit_macro_hygiene_notes(context, cursor, &record, path, line, column);
+                if(record.is_header && clang_Cursor_isMacroFunctionLike(cursor) == 0U)
+                {
+                    char *definition;
+
+                    definition = source_range_text(context->env, context->err, context->translation_unit, path, record.start_offset, record.end_offset);
+                    if(definition != NULL)
+                    {
+                        const char *replacement;
+                        size_t      name_length;
+
+                        replacement = definition;
+                        name_length = p101_strlen(context->env, record.name);
+                        if(p101_strncmp(context->env, replacement, record.name, name_length) == 0)
+                        {
+                            char macro_note[ANALYSIS_NAME_SIZE];
+                            char macro_usr[ANALYSIS_IDENTITY_SIZE];
+                            int  note_status;
+                            int  usr_status;
+
+                            replacement += name_length;
+                            while(*replacement == ' ' || *replacement == '\t')
+                            {
+                                replacement++;
+                            }
+                            if(replacement[0] != '\0')
+                            {
+                                note_status = p101_snprintf(context->env, context->err, macro_note, sizeof(macro_note), "API_MACRO_VALUE:%s", replacement);
+                                usr_status  = p101_snprintf(context->env, context->err, macro_usr, sizeof(macro_usr), "macro:%s:%s", path, record.name);
+                                if(note_status >= 0 && (size_t)note_status < sizeof(macro_note) && usr_status >= 0 && (size_t)usr_status < sizeof(macro_usr))
+                                {
+                                    emit_note_as(context, path, line, column, record.start_offset, record.end_offset, true, macro_note, record.name, macro_usr);
+                                }
+                            }
+                        }
+                        p101_free(context->env, definition);
+                    }
+                }
             }
         }
         else if(cursor_kind == CXCursor_MacroExpansion)
@@ -2279,6 +3089,7 @@ static void emit_cursor_record(struct scan_context *context, CXCursor cursor, CX
             referenced          = clang_getCursorReferenced(cursor);
             referenced_kind     = clang_getCursorKind(referenced);
             references_function = cursor_kind_is_function(referenced_kind);
+            observe_semantic_reference(context, cursor, path, line, column, record.start_offset, record.end_offset, record.is_header);
             if(references_function)
             {
                 usr = copy_cursor_usr(context->env, context->err, referenced);
@@ -2306,6 +3117,26 @@ static void emit_cursor_record(struct scan_context *context, CXCursor cursor, CX
                     else
                     {
                         emit_note(context, path, line, column, record.start_offset, record.end_offset, record.is_header, reference_note);
+                    }
+                }
+            }
+            else if(context->pending_result_identity[0] != '\0' && !context->pending_result_reported && record.start_offset > context->pending_result_end)
+            {
+                char identity[ANALYSIS_IDENTITY_SIZE];
+                bool found;
+
+                found = declaration_identity(context->env, context->err, referenced, identity, sizeof(identity));
+                if(found)
+                {
+                    int  comparison;
+                    bool consumed;
+
+                    comparison = p101_strcmp(context->env, identity, context->pending_result_identity);
+                    consumed   = result_use_requires_checked_error(context, cursor);
+                    if(comparison == 0 && consumed)
+                    {
+                        emit_note(context, path, line, column, record.start_offset, record.end_offset, record.is_header, "ERROR_OUTPUT_UNCHECKED");
+                        context->pending_result_reported = true;
                     }
                 }
             }
@@ -2385,6 +3216,35 @@ static void emit_cursor_record(struct scan_context *context, CXCursor cursor, CX
         }
         else if(cursor_kind == CXCursor_BinaryOperator)
         {
+            if(context->pending_result_identity[0] != '\0' && record.start_offset > context->pending_result_end && binary_parent_is_simple_assignment(cursor))
+            {
+                struct binary_operands operands;
+
+                operands.count = 0U;
+                operands.left  = clang_getNullCursor();
+                operands.right = clang_getNullCursor();
+                clang_visitChildren(cursor, capture_binary_operands, &operands);
+                if(operands.count == 2U)
+                {
+                    char identity[ANALYSIS_IDENTITY_SIZE];
+                    bool found;
+
+                    found = expression_identity(context, operands.left, identity, sizeof(identity));
+                    if(found)
+                    {
+                        int comparison;
+
+                        comparison = p101_strcmp(context->env, identity, context->pending_result_identity);
+                        if(comparison == 0)
+                        {
+                            context->pending_result_identity[0]       = '\0';
+                            context->pending_result_error_identity[0] = '\0';
+                            context->pending_result_end               = 0U;
+                            context->pending_result_reported          = false;
+                        }
+                    }
+                }
+            }
             emit_mutation_record(context, cursor, parent, path, line, column);
         }
     }
@@ -2408,10 +3268,18 @@ static enum CXChildVisitResult visit_cursor(CXCursor cursor, CXCursor parent, CX
     char                         *function_name;
     char                         *function_usr;
     bool                          saved_inside_return;
+    bool                          saved_post_fork_child_function;
+    bool                          saved_current_recursion_bounded;
+    char                          saved_uncertain_progress_usr[ANALYSIS_IDENTITY_SIZE];
+    char                          saved_uncertain_progress_identity[ANALYSIS_IDENTITY_SIZE];
     size_t                        saved_final_return_start;
     CXCursor                      saved_final_return_label;
     unsigned                      saved_conditional_depth;
     char                          saved_pending_error_identity[ANALYSIS_IDENTITY_SIZE];
+    char                          saved_pending_result_identity[ANALYSIS_IDENTITY_SIZE];
+    char                          saved_pending_result_error_identity[ANALYSIS_IDENTITY_SIZE];
+    size_t                        saved_pending_result_end;
+    bool                          saved_pending_result_reported;
     char                          saved_checked_error_identity[ANALYSIS_IDENTITY_SIZE];
     char                          saved_enum[ANALYSIS_NAME_SIZE];
     char                          saved_enum_usr[ANALYSIS_IDENTITY_SIZE];
@@ -2425,15 +3293,23 @@ static enum CXChildVisitResult visit_cursor(CXCursor cursor, CXCursor parent, CX
     const struct cursor_ancestry *saved_ancestry;
     struct cursor_ancestry        ancestry;
 
-    context                      = (struct scan_context *)client_data;
-    saved_function               = context->current_function;
-    saved_function_usr           = context->current_function_usr;
-    saved_inside_return          = context->inside_return;
+    context                         = (struct scan_context *)client_data;
+    saved_function                  = context->current_function;
+    saved_function_usr              = context->current_function_usr;
+    saved_inside_return             = context->inside_return;
+    saved_post_fork_child_function  = context->post_fork_child_function;
+    saved_current_recursion_bounded = context->current_recursion_bounded;
+    p101_snprintf(context->env, context->err, saved_uncertain_progress_usr, sizeof(saved_uncertain_progress_usr), "%s", context->uncertain_progress_usr);
+    p101_snprintf(context->env, context->err, saved_uncertain_progress_identity, sizeof(saved_uncertain_progress_identity), "%s", context->uncertain_progress_identity);
     saved_final_return_start     = context->final_return_start;
     saved_final_return_label     = context->final_return_label;
     saved_conditional_depth      = context->conditional_depth;
     saved_conditional_has_return = context->conditional_has_return;
     p101_snprintf(context->env, context->err, saved_pending_error_identity, sizeof(saved_pending_error_identity), "%s", context->pending_error_identity);
+    p101_snprintf(context->env, context->err, saved_pending_result_identity, sizeof(saved_pending_result_identity), "%s", context->pending_result_identity);
+    p101_snprintf(context->env, context->err, saved_pending_result_error_identity, sizeof(saved_pending_result_error_identity), "%s", context->pending_result_error_identity);
+    saved_pending_result_end      = context->pending_result_end;
+    saved_pending_result_reported = context->pending_result_reported;
     p101_snprintf(context->env, context->err, saved_checked_error_identity, sizeof(saved_checked_error_identity), "%s", context->checked_error_identity);
     p101_snprintf(context->env, context->err, saved_enum, sizeof(saved_enum), "%s", context->current_enum);
     p101_snprintf(context->env, context->err, saved_enum_usr, sizeof(saved_enum_usr), "%s", context->current_enum_usr);
@@ -2449,6 +3325,10 @@ static enum CXChildVisitResult visit_cursor(CXCursor cursor, CXCursor parent, CX
     }
 
     kind = clang_getCursorKind(cursor);
+    if(kind == CXCursor_BinaryOperator)
+    {
+        remember_signal_action_binding(context, cursor);
+    }
     if(kind == CXCursor_ReturnStmt)
     {
         context->inside_return = true;
@@ -2483,9 +3363,13 @@ static enum CXChildVisitResult visit_cursor(CXCursor cursor, CXCursor parent, CX
     {
         conditional_scope = true;
         context->conditional_depth++;
-        context->conditional_has_return    = false;
-        context->pending_error_identity[0] = '\0';
-        context->checked_error_identity[0] = '\0';
+        context->conditional_has_return           = false;
+        context->pending_error_identity[0]        = '\0';
+        context->pending_result_identity[0]       = '\0';
+        context->pending_result_error_identity[0] = '\0';
+        context->pending_result_end               = 0U;
+        context->pending_result_reported          = false;
+        context->checked_error_identity[0]        = '\0';
     }
     is_function   = cursor_kind_is_function(kind);
     is_definition = cursor_is_definition(cursor);
@@ -2494,16 +3378,23 @@ static enum CXChildVisitResult visit_cursor(CXCursor cursor, CXCursor parent, CX
         CXString spelling;
         CXString usr;
 
-        function_scope                     = true;
-        spelling                           = clang_getCursorSpelling(cursor);
-        function_name                      = copy_cx_string(context->env, context->err, spelling);
-        usr                                = clang_getCursorUSR(cursor);
-        function_usr                       = copy_cx_string(context->env, context->err, usr);
-        context->current_function          = function_name;
-        context->current_function_usr      = function_usr;
-        context->final_return_start        = function_final_return_start(cursor, &context->final_return_label);
-        context->pending_error_identity[0] = '\0';
-        context->checked_error_identity[0] = '\0';
+        function_scope                          = true;
+        spelling                                = clang_getCursorSpelling(cursor);
+        function_name                           = copy_cx_string(context->env, context->err, spelling);
+        usr                                     = clang_getCursorUSR(cursor);
+        function_usr                            = copy_cx_string(context->env, context->err, usr);
+        context->current_function               = function_name;
+        context->current_function_usr           = function_usr;
+        context->post_fork_child_function       = function_has_semantic_role(context->env, cursor, "p101:process:post-fork-child");
+        context->current_recursion_bounded      = function_has_semantic_role(context->env, cursor, "p101:recursion:bounded");
+        context->uncertain_progress_usr[0]      = '\0';
+        context->uncertain_progress_identity[0] = '\0';
+        context->final_return_start             = function_final_return_start(cursor, &context->final_return_label);
+        context->pending_error_identity[0]      = '\0';
+        context->checked_error_identity[0]      = '\0';
+        context->environment_borrow_count       = 0U;
+        context->checked_path_identity[0]       = '\0';
+        context->signal_action_binding_count    = 0U;
     }
     if(kind == CXCursor_EnumDecl)
     {
@@ -2545,18 +3436,26 @@ static enum CXChildVisitResult visit_cursor(CXCursor cursor, CXCursor parent, CX
     ancestry.parent   = saved_ancestry;
     context->ancestry = &ancestry;
     clang_visitChildren(cursor, visit_cursor, context);
-    context->ancestry             = saved_ancestry;
-    context->current_function     = saved_function;
-    context->current_function_usr = saved_function_usr;
-    context->inside_return        = saved_inside_return;
-    context->final_return_start   = saved_final_return_start;
-    context->final_return_label   = saved_final_return_label;
-    context->conditional_depth    = saved_conditional_depth;
+    context->ancestry                  = saved_ancestry;
+    context->current_function          = saved_function;
+    context->current_function_usr      = saved_function_usr;
+    context->post_fork_child_function  = saved_post_fork_child_function;
+    context->current_recursion_bounded = saved_current_recursion_bounded;
+    context->inside_return             = saved_inside_return;
+    context->final_return_start        = saved_final_return_start;
+    context->final_return_label        = saved_final_return_label;
+    context->conditional_depth         = saved_conditional_depth;
     p101_snprintf(context->env, context->err, context->current_enum, sizeof(context->current_enum), "%s", saved_enum);
     p101_snprintf(context->env, context->err, context->current_enum_usr, sizeof(context->current_enum_usr), "%s", saved_enum_usr);
     if(function_scope)
     {
+        p101_snprintf(context->env, context->err, context->uncertain_progress_usr, sizeof(context->uncertain_progress_usr), "%s", saved_uncertain_progress_usr);
+        p101_snprintf(context->env, context->err, context->uncertain_progress_identity, sizeof(context->uncertain_progress_identity), "%s", saved_uncertain_progress_identity);
         p101_snprintf(context->env, context->err, context->pending_error_identity, sizeof(context->pending_error_identity), "%s", saved_pending_error_identity);
+        p101_snprintf(context->env, context->err, context->pending_result_identity, sizeof(context->pending_result_identity), "%s", saved_pending_result_identity);
+        p101_snprintf(context->env, context->err, context->pending_result_error_identity, sizeof(context->pending_result_error_identity), "%s", saved_pending_result_error_identity);
+        context->pending_result_end      = saved_pending_result_end;
+        context->pending_result_reported = saved_pending_result_reported;
         p101_snprintf(context->env, context->err, context->checked_error_identity, sizeof(context->checked_error_identity), "%s", saved_checked_error_identity);
         context->conditional_has_return = saved_conditional_has_return;
     }
@@ -3797,12 +4696,189 @@ static bool callee_usr_registers_handler(const struct p101_env *env, const char 
     return ret_val;
 }
 
+struct function_reference_capture
+{
+    CXCursor function;
+    bool     found;
+};
+
+static enum CXChildVisitResult capture_function_reference(CXCursor candidate, CXCursor parent, CXClientData client_data)
+{
+    struct function_reference_capture *capture;
+    enum CXChildVisitResult            result;
+
+    (void)parent;
+    capture = (struct function_reference_capture *)client_data;
+    result  = CXChildVisit_Recurse;
+    if(clang_getCursorKind(candidate) == CXCursor_DeclRefExpr)
+    {
+        CXCursor referenced;
+
+        referenced = clang_getCursorReferenced(candidate);
+        if(cursor_kind_is_function(clang_getCursorKind(referenced)))
+        {
+            capture->function = referenced;
+            capture->found    = true;
+            result            = CXChildVisit_Break;
+        }
+    }
+    return result;
+}
+
+static bool cursor_has_function_pointer_type(CXCursor cursor)
+{
+    CXType type;
+    CXType pointee;
+    bool   matches;
+
+    matches = false;
+    type    = clang_getCanonicalType(clang_getCursorType(cursor));
+    if(type.kind == CXType_Pointer)
+    {
+        pointee = clang_getCanonicalType(clang_getPointeeType(type));
+        matches = pointee.kind == CXType_FunctionProto || pointee.kind == CXType_FunctionNoProto;
+    }
+    return matches;
+}
+
+static enum CXChildVisitResult probe_function_pointer_member(CXCursor cursor, CXCursor parent, CXClientData client_data)
+{
+    bool                   *found;
+    enum CXChildVisitResult result;
+
+    (void)parent;
+    found  = (bool *)client_data;
+    *found = cursor_has_function_pointer_type(cursor);
+    result = *found ? CXChildVisit_Break : CXChildVisit_Recurse;
+    return result;
+}
+
+static void remember_signal_action_binding(struct scan_context *context, CXCursor cursor)
+{
+    struct binary_operands            operands;
+    struct function_reference_capture capture;
+    char                              owner_identity[ANALYSIS_IDENTITY_SIZE];
+    bool                              function_member;
+    bool                              has_owner;
+
+    if(!binary_parent_is_simple_assignment(cursor))
+    {
+        goto done;
+    }
+    operands.count = 0U;
+    operands.left  = clang_getNullCursor();
+    operands.right = clang_getNullCursor();
+    clang_visitChildren(cursor, capture_binary_operands, &operands);
+    if(operands.count != 2U)
+    {
+        goto done;
+    }
+    function_member = false;
+    if(probe_function_pointer_member(operands.left, cursor, &function_member) == CXChildVisit_Recurse)
+    {
+        clang_visitChildren(operands.left, probe_function_pointer_member, &function_member);
+    }
+    if(!function_member)
+    {
+        goto done;
+    }
+    has_owner = expression_identity(context, operands.left, owner_identity, sizeof(owner_identity));
+    if(!has_owner)
+    {
+        goto done;
+    }
+    {
+        size_t identity_length;
+        size_t component_start;
+
+        identity_length = p101_strlen(context->env, owner_identity);
+        component_start = 0U;
+        for(size_t index = 0U; index + 1U < identity_length; index++)
+        {
+            if(owner_identity[index] == ';')
+            {
+                component_start = index + 1U;
+            }
+        }
+        if(component_start > 0U)
+        {
+            p101_memmove(context->env, owner_identity, owner_identity + component_start, identity_length - component_start + 1U);
+        }
+    }
+    capture.function = clang_getNullCursor();
+    capture.found    = false;
+    if(capture_function_reference(operands.right, cursor, &capture) == CXChildVisit_Recurse)
+    {
+        clang_visitChildren(operands.right, capture_function_reference, &capture);
+    }
+    if(capture.found)
+    {
+        size_t index;
+        char  *handler_name;
+        char  *handler_usr;
+
+        index = context->signal_action_binding_count;
+        for(size_t candidate = 0U; candidate < context->signal_action_binding_count; candidate++)
+        {
+            int comparison;
+
+            comparison = p101_strcmp(context->env, context->signal_action_bindings[candidate].owner_identity, owner_identity);
+            if(comparison == 0)
+            {
+                index = candidate;
+                break;
+            }
+        }
+        if(index == context->signal_action_binding_count && index < SEMANTIC_IDENTITY_CAPACITY)
+        {
+            context->signal_action_binding_count++;
+        }
+        if(index < SEMANTIC_IDENTITY_CAPACITY)
+        {
+            handler_name = copy_cursor_spelling(context->env, context->err, capture.function);
+            handler_usr  = copy_cursor_usr(context->env, context->err, capture.function);
+            if(handler_name != NULL && handler_usr != NULL)
+            {
+                p101_snprintf(context->env, context->err, context->signal_action_bindings[index].owner_identity, sizeof(context->signal_action_bindings[index].owner_identity), "%s", owner_identity);
+                p101_snprintf(context->env, context->err, context->signal_action_bindings[index].handler_name, sizeof(context->signal_action_bindings[index].handler_name), "%s", handler_name);
+                p101_snprintf(context->env, context->err, context->signal_action_bindings[index].handler_usr, sizeof(context->signal_action_bindings[index].handler_usr), "%s", handler_usr);
+            }
+            p101_free(context->env, handler_name);
+            p101_free(context->env, handler_usr);
+        }
+    }
+
+done:
+    return;
+}
+
+static bool callee_usr_registers_signal_handler(const struct p101_env *env, const char *usr)
+{
+    static const char *const registrars[] = {"c:@F@signal", "c:@F@bsd_signal", "c:@F@sigset", "c:@F@sigaction", "c:@F@p101_signal", "c:@F@p101_sigaction"};
+    bool                     ret_val;
+
+    ret_val = false;
+    for(size_t index = 0U; index < sizeof(registrars) / sizeof(registrars[0]) && !ret_val; index++)
+    {
+        int comparison;
+
+        comparison = p101_strcmp(env, usr, registrars[index]);
+        if(comparison == 0)
+        {
+            ret_val = true;
+        }
+    }
+
+    return ret_val;
+}
+
 static enum CXChildVisitResult probe_handler_reference(CXCursor candidate, CXCursor parent, CXClientData client_data);
 
 struct handler_probe
 {
     struct scan_context *context;
     const char          *path;
+    const char          *note_name;
     size_t               line;
     size_t               column;
     bool                 is_header;
@@ -3834,7 +4910,7 @@ static enum CXChildVisitResult probe_handler_reference(CXCursor candidate, CXCur
             handler_usr  = copy_cursor_usr(probe->context->env, probe->context->err, referenced);
             if(handler_name != NULL && handler_usr != NULL)
             {
-                emit_note_as(probe->context, probe->path, probe->line, probe->column, 0U, 0U, probe->is_header, "HANDLER_REGISTERED", handler_name, handler_usr);
+                emit_note_as(probe->context, probe->path, probe->line, probe->column, 0U, 0U, probe->is_header, probe->note_name, handler_name, handler_usr);
             }
             p101_free(probe->context->env, handler_name);
             p101_free(probe->context->env, handler_usr);
@@ -3856,13 +4932,16 @@ static void emit_handler_notes(struct scan_context *context, CXCursor cursor, co
         CXString    identity;
         const char *callee_usr;
         bool        registers;
+        bool        registers_signal;
 
-        identity   = clang_getCursorUSR(referenced);
-        callee_usr = clang_getCString(identity);
-        registers  = false;
+        identity         = clang_getCursorUSR(referenced);
+        callee_usr       = clang_getCString(identity);
+        registers        = false;
+        registers_signal = false;
         if(callee_usr != NULL)
         {
-            registers = callee_usr_registers_handler(context->env, callee_usr);
+            registers        = callee_usr_registers_handler(context->env, callee_usr);
+            registers_signal = callee_usr_registers_signal_handler(context->env, callee_usr);
         }
         clang_disposeString(identity);
         if(registers)
@@ -3872,6 +4951,7 @@ static void emit_handler_notes(struct scan_context *context, CXCursor cursor, co
 
             probe.context   = context;
             probe.path      = path;
+            probe.note_name = "HANDLER_REGISTERED";
             probe.line      = line;
             probe.column    = column;
             probe.is_header = is_header;
@@ -3885,6 +4965,49 @@ static void emit_handler_notes(struct scan_context *context, CXCursor cursor, co
                 visit_result = probe_handler_reference(argument, cursor, &probe);
                 (void)visit_result;
                 clang_visitChildren(argument, probe_handler_reference, &probe);
+            }
+        }
+        if(registers_signal)
+        {
+            struct handler_probe probe;
+            int                  argument_count;
+
+            probe.context   = context;
+            probe.path      = path;
+            probe.note_name = "SIGNAL_HANDLER_REGISTERED";
+            probe.line      = line;
+            probe.column    = column;
+            probe.is_header = is_header;
+            argument_count  = clang_Cursor_getNumArguments(cursor);
+            for(int index = 0; index < argument_count; index++)
+            {
+                CXCursor                argument;
+                enum CXChildVisitResult visit_result;
+
+                argument     = clang_Cursor_getArgument(cursor, (unsigned)index);
+                visit_result = probe_handler_reference(argument, cursor, &probe);
+                (void)visit_result;
+                clang_visitChildren(argument, probe_handler_reference, &probe);
+            }
+            for(int argument_index = 0; argument_index < argument_count; argument_index++)
+            {
+                CXCursor argument;
+                char     owner_identity[ANALYSIS_IDENTITY_SIZE];
+                bool     has_owner;
+
+                argument  = clang_Cursor_getArgument(cursor, (unsigned)argument_index);
+                has_owner = expression_identity(context, argument, owner_identity, sizeof(owner_identity));
+                for(size_t binding_index = 0U; has_owner && binding_index < context->signal_action_binding_count; binding_index++)
+                {
+                    int comparison;
+
+                    comparison = p101_strcmp(context->env, owner_identity, context->signal_action_bindings[binding_index].owner_identity);
+                    if(comparison == 0)
+                    {
+                        emit_note_as(context, path, line, column, 0U, 0U, is_header, "SIGNAL_HANDLER_REGISTERED", context->signal_action_bindings[binding_index].handler_name, context->signal_action_bindings[binding_index].handler_usr);
+                        break;
+                    }
+                }
             }
         }
     }

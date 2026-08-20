@@ -421,31 +421,46 @@ enum p101_c_note_kind p101_c_note_kind_from_name(const struct p101_env *env, con
             const char           *name;
             enum p101_c_note_kind kind;
         } mappings[] = {
-            {"ENV_CONTRACT",                                      P101_C_NOTE_ENV_CONTRACT           },
-            {"ERROR_CONTRACT",                                    P101_C_NOTE_ERROR_CONTRACT         },
-            {"ENV_USE",                                           P101_C_NOTE_ENV_USE                },
-            {"ERROR_USE",                                         P101_C_NOTE_ERROR_USE              },
-            {"TYPE_SEMANTIC_ROLE:p101:trace-scope",               P101_C_NOTE_TRACE_USE              },
-            {"ERROR_CHECK",                                       P101_C_NOTE_ERROR_CHECK            },
-            {"ERROR_OPTIONAL",                                    P101_C_NOTE_ERROR_OPTIONAL         },
-            {"ERROR_DISCARD",                                     P101_C_NOTE_ERROR_DISCARD          },
-            {"ERROR_PROPAGATED",                                  P101_C_NOTE_ERROR_PROPAGATED       },
-            {"ERROR_UNCHECKED_CHAIN",                             P101_C_NOTE_ERROR_UNCHECKED_CHAIN  },
-            {"FUNCTION_RETURN",                                   P101_C_NOTE_FUNCTION_RETURN        },
-            {"FUNCTION_EARLY_RETURN",                             P101_C_NOTE_FUNCTION_EARLY_RETURN  },
-            {"CALL_NOT_ISOLATED",                                 P101_C_NOTE_CALL_NOT_ISOLATED      },
-            {"CALL_RESULT_DISCARDED",                             P101_C_NOTE_CALL_RESULT_DISCARDED  },
-            {"SEMANTIC_ROLE:p101:termination-adapter",            P101_C_NOTE_TERMINATION_ADAPTER    },
-            {"CALLEE_SEMANTIC_ROLE:p101:ownership:error:acquire", P101_C_NOTE_OWNERSHIP_ERROR_ACQUIRE},
-            {"CALLEE_SEMANTIC_ROLE:p101:ownership:error:release", P101_C_NOTE_OWNERSHIP_ERROR_RELEASE},
-            {"CALLEE_SEMANTIC_ROLE:p101:ownership:env:acquire",   P101_C_NOTE_OWNERSHIP_ENV_ACQUIRE  },
-            {"CALLEE_SEMANTIC_ROLE:p101:ownership:env:release",   P101_C_NOTE_OWNERSHIP_ENV_RELEASE  },
-            {"SIGNATURE_ENV_ORDER",                               P101_C_NOTE_SIGNATURE_ENV_ORDER    },
-            {"FIELD_REACH",                                       P101_C_NOTE_FIELD_REACH            },
-            {"ALLOC_SIZEOF_TYPE",                                 P101_C_NOTE_ALLOC_SIZEOF_TYPE      },
-            {"MACRO_ARGUMENT_BARE",                               P101_C_NOTE_MACRO_ARGUMENT_BARE    },
-            {"MACRO_STATEMENT_BARE",                              P101_C_NOTE_MACRO_STATEMENT_BARE   },
-            {"HANDLER_REGISTERED",                                P101_C_NOTE_HANDLER_REGISTERED     },
+            {"ENV_CONTRACT",                                      P101_C_NOTE_ENV_CONTRACT                    },
+            {"ERROR_CONTRACT",                                    P101_C_NOTE_ERROR_CONTRACT                  },
+            {"ENV_USE",                                           P101_C_NOTE_ENV_USE                         },
+            {"ERROR_USE",                                         P101_C_NOTE_ERROR_USE                       },
+            {"TYPE_SEMANTIC_ROLE:p101:trace-scope",               P101_C_NOTE_TRACE_USE                       },
+            {"ERROR_CHECK",                                       P101_C_NOTE_ERROR_CHECK                     },
+            {"ERROR_OPTIONAL",                                    P101_C_NOTE_ERROR_OPTIONAL                  },
+            {"ERROR_DISCARD",                                     P101_C_NOTE_ERROR_DISCARD                   },
+            {"ERROR_PROPAGATED",                                  P101_C_NOTE_ERROR_PROPAGATED                },
+            {"ERROR_UNCHECKED_CHAIN",                             P101_C_NOTE_ERROR_UNCHECKED_CHAIN           },
+            {"ERROR_OUTPUT_UNCHECKED",                            P101_C_NOTE_ERROR_OUTPUT_UNCHECKED          },
+            {"FUNCTION_RETURN",                                   P101_C_NOTE_FUNCTION_RETURN                 },
+            {"FUNCTION_EARLY_RETURN",                             P101_C_NOTE_FUNCTION_EARLY_RETURN           },
+            {"CALL_NOT_ISOLATED",                                 P101_C_NOTE_CALL_NOT_ISOLATED               },
+            {"CALL_RESULT_DISCARDED",                             P101_C_NOTE_CALL_RESULT_DISCARDED           },
+            {"SEMANTIC_ROLE:p101:termination-adapter",            P101_C_NOTE_TERMINATION_ADAPTER             },
+            {"CALLEE_SEMANTIC_ROLE:p101:ownership:error:acquire", P101_C_NOTE_OWNERSHIP_ERROR_ACQUIRE         },
+            {"CALLEE_SEMANTIC_ROLE:p101:ownership:error:release", P101_C_NOTE_OWNERSHIP_ERROR_RELEASE         },
+            {"CALLEE_SEMANTIC_ROLE:p101:ownership:env:acquire",   P101_C_NOTE_OWNERSHIP_ENV_ACQUIRE           },
+            {"CALLEE_SEMANTIC_ROLE:p101:ownership:env:release",   P101_C_NOTE_OWNERSHIP_ENV_RELEASE           },
+            {"SIGNATURE_ENV_ORDER",                               P101_C_NOTE_SIGNATURE_ENV_ORDER             },
+            {"FIELD_REACH",                                       P101_C_NOTE_FIELD_REACH                     },
+            {"ALLOC_SIZEOF_TYPE",                                 P101_C_NOTE_ALLOC_SIZEOF_TYPE               },
+            {"MACRO_ARGUMENT_BARE",                               P101_C_NOTE_MACRO_ARGUMENT_BARE             },
+            {"MACRO_STATEMENT_BARE",                              P101_C_NOTE_MACRO_STATEMENT_BARE            },
+            {"HANDLER_REGISTERED",                                P101_C_NOTE_HANDLER_REGISTERED              },
+            {"MUST_CHECK_RESULT_DISCARDED",                       P101_C_NOTE_MUST_CHECK_RESULT_DISCARDED     },
+            {"ERROR_CLEANUP_SHADOW",                              P101_C_NOTE_ERROR_CLEANUP_SHADOW            },
+            {"PARTIAL_RESULT_DISCARDED",                          P101_C_NOTE_PARTIAL_RESULT_DISCARDED        },
+            {"UNCERTAIN_PROGRESS_RETRIED",                        P101_C_NOTE_UNCERTAIN_PROGRESS_RETRIED      },
+            {"CONDITION_WAIT_OUTSIDE_LOOP",                       P101_C_NOTE_CONDITION_WAIT_OUTSIDE_LOOP     },
+            {"POST_FORK_UNSAFE_CALL",                             P101_C_NOTE_POST_FORK_UNSAFE_CALL           },
+            {"ZERO_SIZE_ALLOCATION",                              P101_C_NOTE_ZERO_SIZE_ALLOCATION            },
+            {"OVERLAPPING_RESTRICTED_COPY",                       P101_C_NOTE_OVERLAPPING_RESTRICTED_COPY     },
+            {"THREAD_AUTOMATIC_STORAGE_ESCAPE",                   P101_C_NOTE_THREAD_AUTOMATIC_STORAGE_ESCAPE },
+            {"ENV_BORROWED_POINTER_INVALIDATED",                  P101_C_NOTE_ENV_BORROWED_POINTER_INVALIDATED},
+            {"PATH_TOCTOU",                                       P101_C_NOTE_PATH_TOCTOU                     },
+            {"SIGNAL_HANDLER_REGISTERED",                         P101_C_NOTE_SIGNAL_HANDLER_REGISTERED       },
+            {"SIGNAL_SHARED_OBJECT_ACCESS",                       P101_C_NOTE_SIGNAL_SHARED_OBJECT_ACCESS     },
+            {"RECURSIVE_CALL",                                    P101_C_NOTE_RECURSIVE_CALL                  },
         };
 
         for(size_t index = 0U; index < sizeof(mappings) / sizeof(mappings[0]); index++)
@@ -503,6 +518,9 @@ const char *p101_c_note_kind_name(enum p101_c_note_kind kind)
         case P101_C_NOTE_ERROR_UNCHECKED_CHAIN:
             name = "ERROR_UNCHECKED_CHAIN";
             break;
+        case P101_C_NOTE_ERROR_OUTPUT_UNCHECKED:
+            name = "ERROR_OUTPUT_UNCHECKED";
+            break;
         case P101_C_NOTE_FUNCTION_RETURN:
             name = "FUNCTION_RETURN";
             break;
@@ -547,6 +565,48 @@ const char *p101_c_note_kind_name(enum p101_c_note_kind kind)
             break;
         case P101_C_NOTE_HANDLER_REGISTERED:
             name = "HANDLER_REGISTERED";
+            break;
+        case P101_C_NOTE_MUST_CHECK_RESULT_DISCARDED:
+            name = "MUST_CHECK_RESULT_DISCARDED";
+            break;
+        case P101_C_NOTE_ERROR_CLEANUP_SHADOW:
+            name = "ERROR_CLEANUP_SHADOW";
+            break;
+        case P101_C_NOTE_PARTIAL_RESULT_DISCARDED:
+            name = "PARTIAL_RESULT_DISCARDED";
+            break;
+        case P101_C_NOTE_UNCERTAIN_PROGRESS_RETRIED:
+            name = "UNCERTAIN_PROGRESS_RETRIED";
+            break;
+        case P101_C_NOTE_CONDITION_WAIT_OUTSIDE_LOOP:
+            name = "CONDITION_WAIT_OUTSIDE_LOOP";
+            break;
+        case P101_C_NOTE_POST_FORK_UNSAFE_CALL:
+            name = "POST_FORK_UNSAFE_CALL";
+            break;
+        case P101_C_NOTE_ZERO_SIZE_ALLOCATION:
+            name = "ZERO_SIZE_ALLOCATION";
+            break;
+        case P101_C_NOTE_OVERLAPPING_RESTRICTED_COPY:
+            name = "OVERLAPPING_RESTRICTED_COPY";
+            break;
+        case P101_C_NOTE_THREAD_AUTOMATIC_STORAGE_ESCAPE:
+            name = "THREAD_AUTOMATIC_STORAGE_ESCAPE";
+            break;
+        case P101_C_NOTE_ENV_BORROWED_POINTER_INVALIDATED:
+            name = "ENV_BORROWED_POINTER_INVALIDATED";
+            break;
+        case P101_C_NOTE_PATH_TOCTOU:
+            name = "PATH_TOCTOU";
+            break;
+        case P101_C_NOTE_SIGNAL_HANDLER_REGISTERED:
+            name = "SIGNAL_HANDLER_REGISTERED";
+            break;
+        case P101_C_NOTE_SIGNAL_SHARED_OBJECT_ACCESS:
+            name = "SIGNAL_SHARED_OBJECT_ACCESS";
+            break;
+        case P101_C_NOTE_RECURSIVE_CALL:
+            name = "RECURSIVE_CALL";
             break;
         case P101_C_NOTE_OTHER:
         default:
